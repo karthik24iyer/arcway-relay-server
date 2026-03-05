@@ -5,10 +5,10 @@ const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const crypto = require('crypto');
 
-const dbDir = path.dirname(process.env.DB_PATH || path.join(os.homedir(), '.claude-remote', 'relay.db'));
+const dbDir = path.dirname(process.env.DB_PATH || path.join(os.homedir(), '.arcway-remote', 'relay.db'));
 fs.mkdirSync(dbDir, { recursive: true });
 
-const dbPath = process.env.DB_PATH || path.join(os.homedir(), '.claude-remote', 'relay.db');
+const dbPath = process.env.DB_PATH || path.join(os.homedir(), '.arcway-remote', 'relay.db');
 const db = new Database(dbPath);
 
 db.exec(`
