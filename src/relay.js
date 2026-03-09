@@ -30,8 +30,10 @@ function handleAgentConnection(ws) {
       console.log(`Agent connected: ${device.id} (${device.name})`);
       ws.send(JSON.stringify({ type: 'authenticated', device_id: device.id }));
       ws.on('close', () => {
-        connectedAgents.delete(device.id);
-        console.log(`Agent disconnected: ${device.id}`);
+        if (connectedAgents.get(device.id) === ws) {
+          connectedAgents.delete(device.id);
+          console.log(`Agent disconnected: ${device.id}`);
+        }
       });
     } else if (msg.device_token) {
       const userId = consumeLinkToken(msg.device_token);
@@ -46,8 +48,10 @@ function handleAgentConnection(ws) {
       updateLastSeen(id);
       connectedAgents.set(id, ws);
       ws.on('close', () => {
-        connectedAgents.delete(id);
-        console.log(`Agent disconnected: ${id}`);
+        if (connectedAgents.get(id) === ws) {
+          connectedAgents.delete(id);
+          console.log(`Agent disconnected: ${id}`);
+        }
       });
     } else {
       ws.close(1008, 'Missing device_credential or device_token');
