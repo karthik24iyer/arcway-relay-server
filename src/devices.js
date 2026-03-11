@@ -1,5 +1,5 @@
 const express = require('express');
-const { verifyGoogleToken, signSessionToken, verifySessionToken } = require('./auth');
+const { verifyGoogleToken, verifyAppleToken, signSessionToken, verifySessionToken } = require('./auth');
 const { upsertUser, listDevices, createLinkToken, upsertDeviceByName } = require('./db');
 const { connectedAgents } = require('./relay');
 
@@ -32,6 +32,19 @@ router.post('/auth/google', async (req, res) => {
     res.json({ session_token });
   } catch (err) {
     console.error('/auth/google error:', err.message);
+    res.status(401).json({ error: err.message });
+  }
+});
+
+router.post('/auth/apple', async (req, res) => {
+  try {
+    const { identity_token } = req.body;
+    const { sub, email } = await verifyAppleToken(identity_token);
+    const user = upsertUser(sub, email);
+    const session_token = signSessionToken(user.id, email);
+    res.json({ session_token });
+  } catch (err) {
+    console.error('/auth/apple error:', err.message);
     res.status(401).json({ error: err.message });
   }
 });
