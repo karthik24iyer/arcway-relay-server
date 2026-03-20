@@ -3,6 +3,21 @@ const { verifySessionToken } = require('./auth');
 
 const connectedAgents = new Map(); // deviceId -> ws
 
+function startHeartbeat(ws, deviceId) {
+  let alive = true;
+  ws.on('pong', () => { alive = true; });
+  const interval = setInterval(() => {
+    if (!alive) {
+      console.log(`Agent heartbeat timeout: ${deviceId}`);
+      ws.terminate();
+      return;
+    }
+    alive = false;
+    ws.ping();
+  }, 5000);
+  ws.on('close', () => clearInterval(interval));
+}
+
 function handleAgentConnection(ws) {
   ws.once('message', (data) => {
     let msg;
@@ -29,6 +44,7 @@ function handleAgentConnection(ws) {
       connectedAgents.set(device.id, ws);
       console.log(`Agent connected: ${device.id} (${device.name})`);
       ws.send(JSON.stringify({ type: 'authenticated', device_id: device.id }));
+      startHeartbeat(ws, device.id);
       ws.on('close', () => {
         if (connectedAgents.get(device.id) === ws) {
           connectedAgents.delete(device.id);
@@ -47,6 +63,7 @@ function handleAgentConnection(ws) {
       ws.send(JSON.stringify({ type: 'registered', device_credential, device_id: id }));
       updateLastSeen(id);
       connectedAgents.set(id, ws);
+      startHeartbeat(ws, id);
       ws.on('close', () => {
         if (connectedAgents.get(id) === ws) {
           connectedAgents.delete(id);
