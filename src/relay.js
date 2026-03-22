@@ -1,4 +1,4 @@
-const { getDeviceByCredential, consumeLinkToken, createDevice, updateLastSeen, listDevices } = require('./db');
+const { getDeviceByCredential, updateLastSeen, listDevices } = require('./db');
 const { verifySessionToken } = require('./auth');
 
 const connectedAgents = new Map(); // deviceId -> ws
@@ -51,27 +51,8 @@ function handleAgentConnection(ws) {
           console.log(`Agent disconnected: ${device.id}`);
         }
       });
-    } else if (msg.device_token) {
-      const userId = consumeLinkToken(msg.device_token);
-      if (!userId) {
-        ws.send(JSON.stringify({ type: 'error', message: 'Invalid or expired link token' }));
-        ws.close(1008, 'Invalid link token');
-        return;
-      }
-      const { id, device_credential } = createDevice(userId, msg.name || 'My Mac');
-      console.log(`Agent registered new device: ${id}`);
-      ws.send(JSON.stringify({ type: 'registered', device_credential, device_id: id }));
-      updateLastSeen(id);
-      connectedAgents.set(id, ws);
-      startHeartbeat(ws, id);
-      ws.on('close', () => {
-        if (connectedAgents.get(id) === ws) {
-          connectedAgents.delete(id);
-          console.log(`Agent disconnected: ${id}`);
-        }
-      });
     } else {
-      ws.close(1008, 'Missing device_credential or device_token');
+      ws.close(1008, 'Missing device_credential');
     }
   });
 }
@@ -111,14 +92,14 @@ function handleClientConnection(ws) {
     const agentWs = connectedAgents.get(msg.device_id);
     if (!agentWs || agentWs.readyState !== 1 /* OPEN */) {
       ws.send(JSON.stringify({ type: 'error', message: 'Device offline' }));
-      ws.close();
+      ws.close(1001, 'Device offline');
       return;
     }
 
     console.log(`Client bridged to agent: ${msg.device_id}`);
 
     const onAgentMessage = (chunk) => { if (ws.readyState === 1) ws.send(chunk); };
-    const onAgentClose = () => { if (ws.readyState === 1) ws.close(); };
+    const onAgentClose = () => { if (ws.readyState === 1) ws.close(1001, 'Agent disconnected'); };
 
     ws.on('message', (chunk) => { if (agentWs.readyState === 1) agentWs.send(chunk); });
     agentWs.on('message', onAgentMessage);

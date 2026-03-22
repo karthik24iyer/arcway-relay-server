@@ -1,6 +1,6 @@
 const express = require('express');
 const { verifyGoogleToken, verifyAppleToken, signSessionToken, verifySessionToken } = require('./auth');
-const { upsertUser, listDevices, createLinkToken, upsertDeviceByName } = require('./db');
+const { upsertUser, listDevices, upsertDeviceByName } = require('./db');
 const { connectedAgents } = require('./relay');
 
 const router = express.Router();
@@ -10,9 +10,8 @@ function authMiddleware(req, res, next) {
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
   if (!token) return res.status(401).json({ error: 'Missing token' });
   try {
-    const { userId, email } = verifySessionToken(token);
+    const { userId } = verifySessionToken(token);
     req.userId = userId;
-    req.email = email;
     next();
   } catch {
     res.status(401).json({ error: 'Invalid token' });
@@ -61,11 +60,6 @@ router.post('/api/devices/register', authMiddleware, (req, res) => {
   const name = req.body?.name || 'My Mac';
   const { id, device_credential } = upsertDeviceByName(req.userId, name);
   res.json({ device_id: id, device_credential });
-});
-
-router.post('/api/devices/link-token', authMiddleware, (req, res) => {
-  const token = createLinkToken(req.userId);
-  res.json({ token });
 });
 
 module.exports = router;

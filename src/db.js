@@ -28,11 +28,6 @@ db.exec(`
     last_seen TEXT
   );
 
-  CREATE TABLE IF NOT EXISTS link_tokens (
-    token TEXT PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id),
-    expires_at TEXT NOT NULL
-  );
 `);
 
 function upsertUser(googleSub, email) {
@@ -66,21 +61,6 @@ function getDeviceByCredential(cred) {
   return db.prepare('SELECT * FROM devices WHERE device_credential = ?').get(cred);
 }
 
-function createLinkToken(userId) {
-  const token = crypto.randomBytes(16).toString('hex');
-  const expires_at = new Date(Date.now() + 10 * 60 * 1000).toISOString();
-  db.prepare('INSERT INTO link_tokens (token, user_id, expires_at) VALUES (?, ?, ?)').run(token, userId, expires_at);
-  return token;
-}
-
-function consumeLinkToken(token) {
-  const row = db.prepare('SELECT * FROM link_tokens WHERE token = ?').get(token);
-  if (!row) return null;
-  db.prepare('DELETE FROM link_tokens WHERE token = ?').run(token);
-  if (new Date(row.expires_at) < new Date()) return null;
-  return row.user_id;
-}
-
 function listDevices(userId) {
   return db.prepare('SELECT id, user_id, name, created_at, last_seen FROM devices WHERE user_id = ?').all(userId);
 }
@@ -89,4 +69,4 @@ function updateLastSeen(deviceId) {
   db.prepare('UPDATE devices SET last_seen = ? WHERE id = ?').run(new Date().toISOString(), deviceId);
 }
 
-module.exports = { upsertUser, createDevice, upsertDeviceByName, getDeviceByCredential, createLinkToken, consumeLinkToken, listDevices, updateLastSeen };
+module.exports = { upsertUser, upsertDeviceByName, getDeviceByCredential, listDevices, updateLastSeen };
