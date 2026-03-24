@@ -9,7 +9,7 @@ if (!process.env.JWT_SECRET) {
 const oauthClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 async function verifyGoogleToken(idToken) {
-  const audience = [process.env.GOOGLE_CLIENT_ID, process.env.MAC_CLIENT_ID].filter(Boolean);
+  const audience = [process.env.GOOGLE_CLIENT_ID, process.env.MAC_CLIENT_ID, process.env.IOS_CLIENT_ID].filter(Boolean);
   const ticket = await oauthClient.verifyIdToken({
     idToken,
     audience,
