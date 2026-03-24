@@ -1,4 +1,5 @@
-const { getDeviceByCredential, updateLastSeen, listDevices } = require('./db');
+const { WebSocket } = require('ws');
+const { getDeviceByCredential, updateLastSeen, listDevices, getUserById } = require('./db');
 const { verifySessionToken } = require('./auth');
 
 const connectedAgents = new Map(); // deviceId -> ws
@@ -25,47 +26,40 @@ function startHeartbeat(ws, deviceId) {
   ws.on('close', () => clearInterval(interval));
 }
 
-function handleAgentConnection(ws) {
-  const authTimeout = setTimeout(() => ws.close(1008, 'Auth timeout'), 10_000);
-  ws.on('close', () => clearTimeout(authTimeout));
+function withAuthTimeout(ws, onMessage) {
+  const t = setTimeout(() => ws.close(1008, 'Auth timeout'), 10_000);
+  ws.on('close', () => clearTimeout(t));
   ws.once('message', async (data) => {
+    clearTimeout(t);
+    let msg;
+    try { msg = JSON.parse(data); } catch { ws.close(1008, 'Invalid JSON'); return; }
+    if (msg.type !== 'auth') { ws.close(1008, 'Expected auth message'); return; }
+    await onMessage(msg);
+  });
+}
+
+function handleAgentConnection(ws) {
+  withAuthTimeout(ws, async (msg) => {
     try {
-      clearTimeout(authTimeout);
-      let msg;
-      try {
-        msg = JSON.parse(data);
-      } catch {
-        ws.close(1008, 'Invalid JSON');
+      if (!msg.device_credential) { ws.close(1008, 'Missing device_credential'); return; }
+      const device = await getDeviceByCredential(msg.device_credential);
+      if (!device) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Invalid credential' }));
+        ws.close(1008, 'Invalid credential');
         return;
       }
-
-      if (msg.type !== 'auth') {
-        ws.close(1008, 'Expected auth message');
-        return;
-      }
-
-      if (msg.device_credential) {
-        const device = await getDeviceByCredential(msg.device_credential);
-        if (!device) {
-          ws.send(JSON.stringify({ type: 'error', message: 'Invalid credential' }));
-          ws.close(1008, 'Invalid credential');
-          return;
+      if (msg.name) device.name = sanitizeName(msg.name);
+      await updateLastSeen(device.id);
+      connectedAgents.set(device.id, ws);
+      console.log(`Agent connected: ${device.id} (${device.name})`);
+      ws.send(JSON.stringify({ type: 'authenticated', device_id: device.id }));
+      startHeartbeat(ws, device.id);
+      ws.on('close', () => {
+        if (connectedAgents.get(device.id) === ws) {
+          connectedAgents.delete(device.id);
+          console.log(`Agent disconnected: ${device.id}`);
         }
-        if (msg.name) device.name = sanitizeName(msg.name);
-        await updateLastSeen(device.id);
-        connectedAgents.set(device.id, ws);
-        console.log(`Agent connected: ${device.id} (${device.name})`);
-        ws.send(JSON.stringify({ type: 'authenticated', device_id: device.id }));
-        startHeartbeat(ws, device.id);
-        ws.on('close', () => {
-          if (connectedAgents.get(device.id) === ws) {
-            connectedAgents.delete(device.id);
-            console.log(`Agent disconnected: ${device.id}`);
-          }
-        });
-      } else {
-        ws.close(1008, 'Missing device_credential');
-      }
+      });
     } catch (err) {
       console.error('Agent auth error:', err);
       ws.close(1011, 'Internal error');
@@ -74,27 +68,11 @@ function handleAgentConnection(ws) {
 }
 
 function handleClientConnection(ws) {
-  const authTimeout = setTimeout(() => ws.close(1008, 'Auth timeout'), 10_000);
-  ws.on('close', () => clearTimeout(authTimeout));
-  ws.once('message', async (data) => {
+  withAuthTimeout(ws, async (msg) => {
     try {
-      clearTimeout(authTimeout);
-      let msg;
+      let userId;
       try {
-        msg = JSON.parse(data);
-      } catch {
-        ws.close(1008, 'Invalid JSON');
-        return;
-      }
-
-      if (msg.type !== 'auth') {
-        ws.close(1008, 'Expected auth message');
-        return;
-      }
-
-      let userId, email;
-      try {
-        ({ userId, email } = verifySessionToken(msg.session_token));
+        ({ userId } = verifySessionToken(msg.session_token));
       } catch {
         ws.send(JSON.stringify({ type: 'error', message: 'Invalid session token' }));
         ws.close(1008, 'Invalid session token');
@@ -110,18 +88,19 @@ function handleClientConnection(ws) {
       }
 
       const agentWs = connectedAgents.get(msg.device_id);
-      if (!agentWs || agentWs.readyState !== 1 /* OPEN */) {
+      if (!agentWs || agentWs.readyState !== WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'error', message: 'Device offline' }));
         ws.close(1001, 'Device offline');
         return;
       }
 
+      const user = await getUserById(userId).catch(() => null);
       console.log(`Client bridged to agent: ${msg.device_id}`);
 
-      const onAgentMessage = (chunk) => { if (ws.readyState === 1) ws.send(chunk); };
-      const onAgentClose = () => { if (ws.readyState === 1) ws.close(1001, 'Agent disconnected'); };
+      const onAgentMessage = (chunk) => { if (ws.readyState === WebSocket.OPEN) ws.send(chunk); };
+      const onAgentClose = () => { if (ws.readyState === WebSocket.OPEN) ws.close(1001, 'Agent disconnected'); };
 
-      ws.on('message', (chunk) => { if (agentWs.readyState === 1) agentWs.send(chunk); });
+      ws.on('message', (chunk) => { if (agentWs.readyState === WebSocket.OPEN) agentWs.send(chunk); });
       agentWs.on('message', onAgentMessage);
       agentWs.on('close', onAgentClose);
 
@@ -131,7 +110,7 @@ function handleClientConnection(ws) {
         console.log(`Client disconnected from agent: ${msg.device_id}`);
       });
 
-      agentWs.send(JSON.stringify({ type: 'client_connected', user_email: email }));
+      agentWs.send(JSON.stringify({ type: 'client_connected', user_email: user?.email ?? '' }));
     } catch (err) {
       console.error('Client auth error:', err);
       ws.close(1011, 'Internal error');
@@ -139,4 +118,4 @@ function handleClientConnection(ws) {
   });
 }
 
-module.exports = { connectedAgents, handleAgentConnection, handleClientConnection };
+module.exports = { connectedAgents, sanitizeName, handleAgentConnection, handleClientConnection };

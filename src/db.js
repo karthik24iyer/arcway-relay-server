@@ -2,6 +2,8 @@ const { Pool } = require('pg');
 const { v4: uuidv4 } = require('uuid');
 const crypto = require('crypto');
 
+const SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
 if (!process.env.POSTGRES_URL) {
   throw new Error('POSTGRES_URL environment variable is required');
 }
@@ -32,6 +34,17 @@ async function initSchema() {
       last_seen         TIMESTAMPTZ,
       UNIQUE(user_id, name)
     );
+
+    CREATE TABLE IF NOT EXISTS sessions (
+      id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id     INTEGER NOT NULL REFERENCES users(id),
+      token_hash  TEXT UNIQUE NOT NULL,
+      expires_at  TIMESTAMPTZ NOT NULL,
+      revoked     BOOLEAN NOT NULL DEFAULT FALSE,
+      ip_address  TEXT,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS sessions_user_id ON sessions(user_id);
   `);
 }
 
@@ -52,7 +65,7 @@ async function upsertDeviceByName(userId, name) {
   const { rows } = await pool.query(
     `INSERT INTO devices (id, user_id, name, device_credential)
      VALUES ($1, $2, $3, $4)
-     ON CONFLICT (user_id, name) DO UPDATE SET name = EXCLUDED.name
+     ON CONFLICT (user_id, name) DO UPDATE SET device_credential = devices.device_credential
      RETURNING id, device_credential`,
     [id, userId, name, device_credential]
   );
@@ -79,4 +92,49 @@ async function updateLastSeen(deviceId) {
   await pool.query('UPDATE devices SET last_seen = now() WHERE id = $1', [deviceId]);
 }
 
-module.exports = { pool, initSchema, upsertUser, upsertDeviceByName, getDeviceByCredential, listDevices, updateLastSeen };
+async function getUserById(id) {
+  const { rows } = await pool.query('SELECT email FROM users WHERE id = $1', [id]);
+  return rows[0] ?? null;
+}
+
+async function createSession(userId, tokenHash, ipAddress) {
+  const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
+  await pool.query(
+    'INSERT INTO sessions (user_id, token_hash, expires_at, ip_address) VALUES ($1, $2, $3, $4)',
+    [userId, tokenHash, expiresAt, ipAddress]
+  );
+}
+
+async function rotateSession(oldTokenHash, newTokenHash, ipAddress) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      'UPDATE sessions SET revoked = TRUE WHERE token_hash = $1 AND revoked = FALSE AND expires_at > now() RETURNING user_id',
+      [oldTokenHash]
+    );
+    if (!rows[0]) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+    const userId = rows[0].user_id;
+    const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
+    await client.query(
+      'INSERT INTO sessions (user_id, token_hash, expires_at, ip_address) VALUES ($1, $2, $3, $4)',
+      [userId, newTokenHash, expiresAt, ipAddress]
+    );
+    await client.query('COMMIT');
+    return userId;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function revokeSession(tokenHash) {
+  await pool.query('UPDATE sessions SET revoked = TRUE WHERE token_hash = $1', [tokenHash]);
+}
+
+module.exports = { pool, initSchema, upsertUser, upsertDeviceByName, getDeviceByCredential, listDevices, updateLastSeen, getUserById, createSession, rotateSession, revokeSession };
