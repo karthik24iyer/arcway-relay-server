@@ -5,6 +5,7 @@ const WebSocket = require('ws');
 const cors = require('cors');
 const { handleAgentConnection, handleClientConnection } = require('./relay');
 const devicesRouter = require('./devices');
+const { pool, initSchema } = require('./db');
 
 const app = express();
 const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') ?? ['http://localhost:3000'];
@@ -29,6 +30,13 @@ wss.on('connection', (ws, req) => {
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`Relay server listening on port ${PORT}`);
-});
+pool.connect()
+  .then(async (client) => {
+    client.release();
+    await initSchema();
+    server.listen(PORT, () => console.log(`Relay server listening on port ${PORT}`));
+  })
+  .catch((err) => {
+    console.error('DB connection failed:', err);
+    process.exit(1);
+  });

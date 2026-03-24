@@ -1,81 +1,82 @@
-const Database = require('better-sqlite3');
-const path = require('path');
-const os = require('os');
-const fs = require('fs');
+const { Pool } = require('pg');
 const { v4: uuidv4 } = require('uuid');
 const crypto = require('crypto');
 
-const dbDir = path.dirname(process.env.DB_PATH || path.join(os.homedir(), '.arcway-remote', 'relay.db'));
-fs.mkdirSync(dbDir, { recursive: true });
-
-const dbPath = process.env.DB_PATH || path.join(os.homedir(), '.arcway-remote', 'relay.db');
-const db = new Database(dbPath);
-
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    google_sub TEXT UNIQUE NOT NULL,
-    email TEXT NOT NULL,
-    created_at TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS devices (
-    id TEXT PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id),
-    name TEXT NOT NULL,
-    device_credential TEXT UNIQUE NOT NULL,
-    created_at TEXT NOT NULL,
-    last_seen TEXT
-  );
-`);
-
-// Additive M1 migration — safe to run multiple times
-for (const sql of [
-  `ALTER TABLE users ADD COLUMN provider TEXT NOT NULL DEFAULT 'google'`,
-  `ALTER TABLE users ADD COLUMN provider_sub TEXT`,
-]) {
-  try { db.exec(sql); } catch { /* column already exists */ }
-}
-db.exec(`UPDATE users SET provider_sub = google_sub WHERE provider_sub IS NULL`);
-try { db.exec(`CREATE UNIQUE INDEX users_provider_sub ON users(provider_sub)`); } catch { /* already exists */ }
-
-function upsertUser(providerSub, email, provider) {
-  const now = new Date().toISOString();
-  db.prepare(`
-    INSERT INTO users (google_sub, provider_sub, provider, email, created_at)
-    VALUES (?, ?, ?, ?, ?)
-    ON CONFLICT(provider_sub) DO UPDATE SET email = excluded.email, provider = excluded.provider
-  `).run(providerSub, providerSub, provider, email, now);
-  return db.prepare('SELECT * FROM users WHERE provider_sub = ?').get(providerSub);
+if (!process.env.POSTGRES_URL) {
+  throw new Error('POSTGRES_URL environment variable is required');
 }
 
-function createDevice(userId, name) {
+const pool = new Pool({
+  connectionString: process.env.POSTGRES_URL,
+  max: 10,
+  connectionTimeoutMillis: 5000,
+});
+
+async function initSchema() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id           SERIAL PRIMARY KEY,
+      provider_sub TEXT NOT NULL,
+      provider     TEXT NOT NULL DEFAULT 'google',
+      email        TEXT NOT NULL,
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE(provider, provider_sub)
+    );
+
+    CREATE TABLE IF NOT EXISTS devices (
+      id                TEXT PRIMARY KEY,
+      user_id           INTEGER NOT NULL REFERENCES users(id),
+      name              TEXT NOT NULL,
+      device_credential TEXT UNIQUE NOT NULL,
+      created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+      last_seen         TIMESTAMPTZ,
+      UNIQUE(user_id, name)
+    );
+  `);
+}
+
+async function upsertUser(providerSub, email, provider) {
+  const { rows } = await pool.query(
+    `INSERT INTO users (provider_sub, provider, email)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (provider, provider_sub) DO UPDATE SET email = EXCLUDED.email
+     RETURNING *`,
+    [providerSub, provider, email]
+  );
+  return rows[0];
+}
+
+async function upsertDeviceByName(userId, name) {
   const id = uuidv4();
   const device_credential = crypto.randomBytes(32).toString('hex');
-  const now = new Date().toISOString();
-  db.prepare(`
-    INSERT INTO devices (id, user_id, name, device_credential, created_at)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(id, userId, name, device_credential, now);
-  return { id, device_credential };
+  const { rows } = await pool.query(
+    `INSERT INTO devices (id, user_id, name, device_credential)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (user_id, name) DO UPDATE SET name = EXCLUDED.name
+     RETURNING id, device_credential`,
+    [id, userId, name, device_credential]
+  );
+  return { id: rows[0].id, device_credential: rows[0].device_credential };
 }
 
-function upsertDeviceByName(userId, name) {
-  const existing = db.prepare('SELECT * FROM devices WHERE user_id = ? AND name = ?').get(userId, name);
-  if (existing) return { id: existing.id, device_credential: existing.device_credential };
-  return createDevice(userId, name);
+async function getDeviceByCredential(cred) {
+  const { rows } = await pool.query(
+    'SELECT * FROM devices WHERE device_credential = $1',
+    [cred]
+  );
+  return rows[0] ?? null;
 }
 
-function getDeviceByCredential(cred) {
-  return db.prepare('SELECT * FROM devices WHERE device_credential = ?').get(cred);
+async function listDevices(userId) {
+  const { rows } = await pool.query(
+    'SELECT id, user_id, name, created_at, last_seen FROM devices WHERE user_id = $1',
+    [userId]
+  );
+  return rows;
 }
 
-function listDevices(userId) {
-  return db.prepare('SELECT id, user_id, name, created_at, last_seen FROM devices WHERE user_id = ?').all(userId);
+async function updateLastSeen(deviceId) {
+  await pool.query('UPDATE devices SET last_seen = now() WHERE id = $1', [deviceId]);
 }
 
-function updateLastSeen(deviceId) {
-  db.prepare('UPDATE devices SET last_seen = ? WHERE id = ?').run(new Date().toISOString(), deviceId);
-}
-
-module.exports = { upsertUser, upsertDeviceByName, getDeviceByCredential, listDevices, updateLastSeen };
+module.exports = { pool, initSchema, upsertUser, upsertDeviceByName, getDeviceByCredential, listDevices, updateLastSeen };
