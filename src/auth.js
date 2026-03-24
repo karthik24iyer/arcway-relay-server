@@ -19,7 +19,7 @@ async function verifyGoogleToken(idToken) {
 }
 
 function signSessionToken(userId) {
-  return jwt.sign({ userId }, process.env.JWT_SECRET, { expiresIn: '30d' });
+  return jwt.sign({ userId }, process.env.JWT_SECRET, { expiresIn: '15m' });
 }
 
 function verifySessionToken(token) {
