@@ -18,8 +18,8 @@ async function verifyGoogleToken(idToken) {
   return { sub: payload.sub, email: payload.email };
 }
 
-function signSessionToken(userId, email) {
-  return jwt.sign({ userId, email }, process.env.JWT_SECRET, { expiresIn: '30d' });
+function signSessionToken(userId) {
+  return jwt.sign({ userId }, process.env.JWT_SECRET, { expiresIn: '30d' });
 }
 
 function verifySessionToken(token) {
