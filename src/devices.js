@@ -31,7 +31,7 @@ router.post('/auth/google', authRateLimit, async (req, res) => {
   try {
     const { id_token } = req.body;
     const { sub, email } = await verifyGoogleToken(id_token);
-    const user = upsertUser(sub, email, 'google');
+    const user = await upsertUser(sub, email, 'google');
     const session_token = signSessionToken(user.id, email);
     res.json({ session_token });
   } catch (err) {
@@ -44,7 +44,7 @@ router.post('/auth/apple', authRateLimit, async (req, res) => {
   try {
     const { identity_token } = req.body;
     const { sub, email } = await verifyAppleToken(identity_token);
-    const user = upsertUser(sub, email, 'apple');
+    const user = await upsertUser(sub, email, 'apple');
     const session_token = signSessionToken(user.id, email);
     res.json({ session_token });
   } catch (err) {
@@ -55,19 +55,27 @@ router.post('/auth/apple', authRateLimit, async (req, res) => {
 
 router.post('/auth/refresh', refreshRateLimit, (req, res) => res.status(404).json({ error: 'Not implemented' }));
 
-router.get('/api/devices', apiRateLimit, authMiddleware, (req, res) => {
-  const devices = listDevices(req.userId).map((d) => ({
-    ...d,
-    online: connectedAgents.has(d.id),
-  }));
-  res.json({ devices });
+router.get('/api/devices', apiRateLimit, authMiddleware, async (req, res) => {
+  try {
+    const raw = await listDevices(req.userId);
+    const devices = raw.map((d) => ({ ...d, online: connectedAgents.has(d.id) }));
+    res.json({ devices });
+  } catch (err) {
+    console.error('/api/devices error:', err.message);
+    res.status(500).json({ error: 'Internal error' });
+  }
 });
 
-router.post('/api/devices/register', apiRateLimit, authMiddleware, (req, res) => {
-  const rawName = req.body?.name || 'My Mac';
-  const name = rawName.replace(/[^\x20-\x7E]/g, '').slice(0, 50) || 'My Mac';
-  const { id, device_credential } = upsertDeviceByName(req.userId, name);
-  res.json({ device_id: id, device_credential });
+router.post('/api/devices/register', apiRateLimit, authMiddleware, async (req, res) => {
+  try {
+    const rawName = req.body?.name || 'My Mac';
+    const name = rawName.replace(/[^\x20-\x7E]/g, '').slice(0, 50) || 'My Mac';
+    const { id, device_credential } = await upsertDeviceByName(req.userId, name);
+    res.json({ device_id: id, device_credential });
+  } catch (err) {
+    console.error('/api/devices/register error:', err.message);
+    res.status(500).json({ error: 'Internal error' });
+  }
 });
 
 module.exports = router;
