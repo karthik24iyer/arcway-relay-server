@@ -2,24 +2,20 @@ const express = require('express');
 const http = require('http');
 const path = require('path');
 const WebSocket = require('ws');
+const cors = require('cors');
 const { handleAgentConnection, handleClientConnection } = require('./relay');
 const devicesRouter = require('./devices');
 
 const app = express();
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  if (req.method === 'OPTIONS') return res.sendStatus(204);
-  next();
-});
+const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') ?? ['http://localhost:3000'];
+app.use(cors({ origin: allowedOrigins }));
 app.use(express.json({ limit: '10kb' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 app.use('/', devicesRouter);
 
 const server = http.createServer(app);
 
-const wss = new WebSocket.Server({ server });
+const wss = new WebSocket.Server({ server, maxPayload: 512 * 1024 });
 
 wss.on('connection', (ws, req) => {
   const { pathname } = new URL(req.url, 'http://localhost');

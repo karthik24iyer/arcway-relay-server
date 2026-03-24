@@ -3,9 +3,16 @@ const { verifySessionToken } = require('./auth');
 
 const connectedAgents = new Map(); // deviceId -> ws
 
+function sanitizeName(name) {
+  return name.replace(/[^\x20-\x7E]/g, '').slice(0, 50) || 'My Mac';
+}
+
 function startHeartbeat(ws, deviceId) {
   let alive = true;
-  ws.on('pong', () => { alive = true; });
+  ws.on('pong', () => {
+    alive = true;
+    updateLastSeen(deviceId);
+  });
   const interval = setInterval(() => {
     if (!alive) {
       console.log(`Agent heartbeat timeout: ${deviceId}`);
@@ -19,7 +26,10 @@ function startHeartbeat(ws, deviceId) {
 }
 
 function handleAgentConnection(ws) {
+  const authTimeout = setTimeout(() => ws.close(1008, 'Auth timeout'), 10_000);
+  ws.on('close', () => clearTimeout(authTimeout));
   ws.once('message', (data) => {
+    clearTimeout(authTimeout);
     let msg;
     try {
       msg = JSON.parse(data);
@@ -40,6 +50,7 @@ function handleAgentConnection(ws) {
         ws.close(1008, 'Invalid credential');
         return;
       }
+      if (msg.name) device.name = sanitizeName(msg.name);
       updateLastSeen(device.id);
       connectedAgents.set(device.id, ws);
       console.log(`Agent connected: ${device.id} (${device.name})`);
@@ -58,7 +69,10 @@ function handleAgentConnection(ws) {
 }
 
 function handleClientConnection(ws) {
+  const authTimeout = setTimeout(() => ws.close(1008, 'Auth timeout'), 10_000);
+  ws.on('close', () => clearTimeout(authTimeout));
   ws.once('message', (data) => {
+    clearTimeout(authTimeout);
     let msg;
     try {
       msg = JSON.parse(data);

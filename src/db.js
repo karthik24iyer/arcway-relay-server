@@ -27,17 +27,26 @@ db.exec(`
     created_at TEXT NOT NULL,
     last_seen TEXT
   );
-
 `);
 
-function upsertUser(googleSub, email) {
+// Additive M1 migration — safe to run multiple times
+for (const sql of [
+  `ALTER TABLE users ADD COLUMN provider TEXT NOT NULL DEFAULT 'google'`,
+  `ALTER TABLE users ADD COLUMN provider_sub TEXT`,
+]) {
+  try { db.exec(sql); } catch { /* column already exists */ }
+}
+db.exec(`UPDATE users SET provider_sub = google_sub WHERE provider_sub IS NULL`);
+try { db.exec(`CREATE UNIQUE INDEX users_provider_sub ON users(provider_sub)`); } catch { /* already exists */ }
+
+function upsertUser(providerSub, email, provider) {
   const now = new Date().toISOString();
   db.prepare(`
-    INSERT INTO users (google_sub, email, created_at)
-    VALUES (?, ?, ?)
-    ON CONFLICT(google_sub) DO UPDATE SET email = excluded.email
-  `).run(googleSub, email, now);
-  return db.prepare('SELECT * FROM users WHERE google_sub = ?').get(googleSub);
+    INSERT INTO users (google_sub, provider_sub, provider, email, created_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(provider_sub) DO UPDATE SET email = excluded.email, provider = excluded.provider
+  `).run(providerSub, providerSub, provider, email, now);
+  return db.prepare('SELECT * FROM users WHERE provider_sub = ?').get(providerSub);
 }
 
 function createDevice(userId, name) {
