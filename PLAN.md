@@ -247,68 +247,14 @@ After Android update is live:
 
 ---
 
-## Milestone 4 — Device Credential Hashing + Grace Period
-Relay-only. Mac agent needs no code change — uses existing re-registration flow.
+## Milestone 4 — Device Credential Hashing ✓ DONE (2026-03-25)
+Relay-only.
 
-### Hash new credentials on creation (`db.js`)
-Install `argon2`. Use low-cost params — device credentials are machine secrets, not
-user passwords. High argon2 cost causes thundering-herd CPU saturation when many agents
-reconnect simultaneously after a relay restart:
-```javascript
-const argon2 = require('argon2');
-// low cost params: suitable for machine secrets, not passwords
-const ARGON2_OPTIONS = { memoryCost: 4096, timeCost: 1, parallelism: 1 };
-
-async function createDevice(userId, name) {
-  const rawCredential = crypto.randomBytes(32).toString('hex');
-  const credentialHash = await argon2.hash(rawCredential, ARGON2_OPTIONS);
-  // store hash, return raw (only time it's visible)
-  await pool.query(
-    'INSERT INTO devices (id, user_id, name, device_credential, credential_hashed, created_at) VALUES ($1,$2,$3,$4,TRUE,$5)',
-    [uuidv4(), userId, name, credentialHash, new Date().toISOString()]
-  );
-  return { id, device_credential: rawCredential };
-}
-```
-Add `credential_hashed BOOLEAN NOT NULL DEFAULT FALSE` column to `devices`.
-
-### Verify hashed credentials on agent connect (`db.js`, `relay.js`)
-Two-query approach — first try hashed lookup, fall through to legacy plaintext:
-```javascript
-async function getDeviceByCredential(rawCred) {
-  // 1. Try new hashed rows
-  const { rows: hashedRows } = await pool.query(
-    'SELECT * FROM devices WHERE credential_hashed = TRUE'
-  );
-  for (const device of hashedRows) {
-    if (await argon2.verify(device.device_credential, rawCred)) return device;
-  }
-  // 2. Legacy plaintext fallback (grace period only)
-  const { rows } = await pool.query(
-    'SELECT * FROM devices WHERE credential_hashed = FALSE AND device_credential = $1',
-    [rawCred]
-  );
-  return rows[0] ?? null;
-}
-```
-Note: scanning all hashed rows is only acceptable at low device counts. Once hashed lookup
-is the norm and legacy rows are rare, add an index or a separate lookup path.
-
-If legacy match: `console.warn('legacy plaintext credential — device', device.id)`.
-
-### Grace period (`relay.js`)
-- `LEGACY_CRED_DEADLINE` env var (ISO date string, e.g. `2025-06-01`)
-- After deadline: remove the legacy fallback query block — plaintext-credential agents rejected
-- Users must re-register: open arcway-mac app → Sign in with Google → device auto-registers with new hashed credential via `POST /api/devices/register`
-
-### Verify
-```
-1. Register new Mac → device_credential in DB is an argon2 hash string (starts with '$argon2')
-2. New Mac connects successfully
-3. Existing Mac (plaintext) still connects during grace period — WARN logged
-4. Set LEGACY_CRED_DEADLINE to past date → existing Mac rejected →
-   open arcway-mac → Sign in with Google → new hashed credential → connects
-```
+- Added `credential_hashed BOOLEAN DEFAULT FALSE` column to `devices` (additive migration via `ALTER TABLE IF NOT EXISTS`)
+- `upsertDeviceByName`: always issues a fresh argon2-hashed credential on every registration call (existing device → UPDATE, new device → INSERT). Raw credential returned once, hash stored.
+- `getDeviceByCredential`: scans `credential_hashed = TRUE` rows and verifies with `argon2.verify`. No plaintext fallback (single-user, low device count).
+- `/auth/google` + `/auth/apple` now include `email` in response body — `AuthService` on Mac reads it from there instead of trying to decode from JWT (email was removed from JWT in M3a).
+- arcway-mac: on `STATUS:invalid_credential` from relay, clears Keychain and shows login screen. Re-registration via "Sign in with Google" issues a new hashed credential automatically.
 
 ---
 
