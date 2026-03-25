@@ -9,7 +9,7 @@ if (!process.env.JWT_SECRET) {
 const oauthClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 async function verifyGoogleToken(idToken) {
-  const audience = [process.env.GOOGLE_CLIENT_ID, process.env.MAC_CLIENT_ID].filter(Boolean);
+  const audience = [process.env.GOOGLE_CLIENT_ID, process.env.MAC_CLIENT_ID, process.env.IOS_CLIENT_ID].filter(Boolean);
   const ticket = await oauthClient.verifyIdToken({
     idToken,
     audience,
@@ -18,8 +18,8 @@ async function verifyGoogleToken(idToken) {
   return { sub: payload.sub, email: payload.email };
 }
 
-function signSessionToken(userId, email) {
-  return jwt.sign({ userId, email }, process.env.JWT_SECRET, { expiresIn: '30d' });
+function signSessionToken(userId) {
+  return jwt.sign({ userId }, process.env.JWT_SECRET, { expiresIn: '15m' });
 }
 
 function verifySessionToken(token) {
