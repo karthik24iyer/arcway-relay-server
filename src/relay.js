@@ -32,6 +32,26 @@ function startHeartbeat(ws, deviceId) {
   });
 }
 
+function startClientHeartbeat(ws, deviceId) {
+  let alive = true;
+  const onPong = () => { alive = true; };
+  ws.on('pong', onPong);
+  const interval = setInterval(() => {
+    if (ws.readyState !== WebSocket.OPEN) { clearInterval(interval); return; }
+    if (!alive) {
+      console.log(`Client heartbeat timeout: ${deviceId}`);
+      ws.terminate();
+      return;
+    }
+    alive = false;
+    ws.ping();
+  }, 10_000);
+  ws.once('close', () => {
+    clearInterval(interval);
+    ws.removeListener('pong', onPong);
+  });
+}
+
 function withAuthTimeout(ws, onMessage) {
   const t = setTimeout(() => ws.close(1008, 'Auth timeout'), 10_000);
   const cancelTimeout = () => clearTimeout(t);
@@ -142,6 +162,7 @@ function handleClientConnection(ws) {
       }
 
       agentWs.setMaxListeners(7); // canary: 6 real listeners + 1 headroom
+      startClientHeartbeat(ws, msg.device_id);
       console.log(`Client bridged to agent: ${msg.device_id}`);
 
       onClientMessage = (chunk) => { if (agentWs.readyState === WebSocket.OPEN) agentWs.send(chunk); };
