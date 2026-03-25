@@ -40,7 +40,7 @@ async function handleOAuthLogin(req, res, verifyFn, provider, tokenField) {
   try {
     const { sub, email } = await verifyFn(req.body[tokenField]);
     const user = await upsertUser(sub, email, provider);
-    res.json(await issueTokens(user.id, req.ip));
+    res.json({ ...(await issueTokens(user.id, req.ip)), email });
   } catch (err) {
     console.error(`/auth/${provider} error:`, err);
     res.status(401).json({ error: 'Authentication failed' });

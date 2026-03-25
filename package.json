@@ -6,6 +6,7 @@
     "start": "node src/index.js"
   },
   "dependencies": {
+    "argon2": "^0.43.0",
     "apple-signin-auth": "^2.0.0",
     "pg": "^8.13.0",
     "cors": "^2.8.6",
