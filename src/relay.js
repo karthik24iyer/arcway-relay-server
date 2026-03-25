@@ -1,6 +1,12 @@
 const { WebSocket } = require('ws');
-const { getDeviceByCredential, updateLastSeen, listDevices, getUserById } = require('./db');
+const { getDeviceByCredential, updateLastSeen, listDevices, getUserById, logAudit } = require('./db');
 const { verifySessionToken } = require('./auth');
+
+function getIp(req) {
+  const fwd = req.headers['x-forwarded-for'];
+  if (fwd) return fwd.split(',')[0].trim();
+  return req.socket?.remoteAddress ?? null;
+}
 
 const connectedAgents = new Map(); // deviceId -> ws
 const bridgedAgents = new Map();   // deviceId -> clientWs
@@ -66,13 +72,14 @@ function withAuthTimeout(ws, onMessage) {
   });
 }
 
-function handleAgentConnection(ws) {
+function handleAgentConnection(ws, req) {
+  const ip = getIp(req);
   let logId = '';
   ws.on('error', (err) => console.error(`Agent ws error ${logId}:`, err));
   withAuthTimeout(ws, async (msg) => {
     try {
       if (!msg.device_credential) { ws.close(1008, 'Missing device_credential'); return; }
-      const device = await getDeviceByCredential(msg.device_credential);
+      const device = await getDeviceByCredential(msg.device_credential, msg.device_id || null);
       if (!device) {
         ws.send(JSON.stringify({ type: 'error', message: 'Invalid credential' }));
         ws.close(1008, 'Invalid credential');
@@ -95,11 +102,13 @@ function handleAgentConnection(ws) {
       connectedAgents.set(device.id, ws);
       console.log(`Agent connected: ${device.id} (${device.name})`);
       ws.send(JSON.stringify({ type: 'authenticated', device_id: device.id }));
+      logAudit(device.user_id, device.id, 'agent_connected', ip).catch((err) => console.error('logAudit failed:', err));
       startHeartbeat(ws, device.id);
       ws.once('close', () => {
         if (connectedAgents.get(device.id) === ws) {
           connectedAgents.delete(device.id);
           console.log(`Agent disconnected: ${device.id}`);
+          logAudit(device.user_id, device.id, 'agent_disconnected', ip).catch((err) => console.error('logAudit failed:', err));
         }
       });
     } catch (err) {
@@ -109,7 +118,8 @@ function handleAgentConnection(ws) {
   });
 }
 
-function handleClientConnection(ws) {
+function handleClientConnection(ws, req) {
+  const ip = getIp(req);
   let logId = '';
   ws.on('error', (err) => console.error(`Client ws error ${logId}:`, err));
   withAuthTimeout(ws, async (msg) => {
@@ -183,6 +193,7 @@ function handleClientConnection(ws) {
         agentWs.removeListener('message', onAgentMessage);
         agentWs.removeListener('close', onAgentClose);
         console.log(`Client disconnected from agent: ${msg.device_id}`);
+        logAudit(userId, msg.device_id, 'client_disconnected', ip).catch((err) => console.error('logAudit failed:', err));
       };
 
       ws.on('message', onClientMessage);
@@ -193,6 +204,7 @@ function handleClientConnection(ws) {
       if (agentWs.readyState === WebSocket.OPEN) {
         agentWs.send(JSON.stringify({ type: 'client_connected', user_email: user?.email ?? '' }));
       }
+      logAudit(userId, msg.device_id, 'client_connected', ip).catch((err) => console.error('logAudit failed:', err));
     } catch (err) {
       console.error('Client auth error:', err);
       if (msg?.device_id && bridgedAgents.get(msg.device_id) === ws) bridgedAgents.delete(msg.device_id);
@@ -207,4 +219,4 @@ function handleClientConnection(ws) {
   });
 }
 
-module.exports = { connectedAgents, sanitizeName, handleAgentConnection, handleClientConnection };
+module.exports = { connectedAgents, sanitizeName, handleAgentConnection, handleClientConnection, getIp };
