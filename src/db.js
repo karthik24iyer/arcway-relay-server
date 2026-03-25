@@ -1,6 +1,9 @@
 const { Pool } = require('pg');
 const { v4: uuidv4 } = require('uuid');
 const crypto = require('crypto');
+const argon2 = require('argon2');
+
+const ARGON2_OPTIONS = { memoryCost: 4096, timeCost: 1, parallelism: 1 };
 
 const SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
@@ -30,10 +33,12 @@ async function initSchema() {
       user_id           INTEGER NOT NULL REFERENCES users(id),
       name              TEXT NOT NULL,
       device_credential TEXT UNIQUE NOT NULL,
+      credential_hashed BOOLEAN NOT NULL DEFAULT FALSE,
       created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
       last_seen         TIMESTAMPTZ,
       UNIQUE(user_id, name)
     );
+    ALTER TABLE devices ADD COLUMN IF NOT EXISTS credential_hashed BOOLEAN NOT NULL DEFAULT FALSE;
 
     CREATE TABLE IF NOT EXISTS sessions (
       id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -60,24 +65,37 @@ async function upsertUser(providerSub, email, provider) {
 }
 
 async function upsertDeviceByName(userId, name) {
-  const id = uuidv4();
-  const device_credential = crypto.randomBytes(32).toString('hex');
-  const { rows } = await pool.query(
-    `INSERT INTO devices (id, user_id, name, device_credential)
-     VALUES ($1, $2, $3, $4)
-     ON CONFLICT (user_id, name) DO UPDATE SET device_credential = devices.device_credential
-     RETURNING id, device_credential`,
-    [id, userId, name, device_credential]
+  const rawCredential = crypto.randomBytes(32).toString('hex');
+  const credentialHash = await argon2.hash(rawCredential, ARGON2_OPTIONS);
+
+  const existing = await pool.query(
+    'SELECT id FROM devices WHERE user_id = $1 AND name = $2',
+    [userId, name]
   );
-  return { id: rows[0].id, device_credential: rows[0].device_credential };
+
+  let id;
+  if (existing.rows[0]) {
+    id = existing.rows[0].id;
+    await pool.query(
+      'UPDATE devices SET device_credential = $1, credential_hashed = TRUE WHERE id = $2',
+      [credentialHash, id]
+    );
+  } else {
+    id = uuidv4();
+    await pool.query(
+      'INSERT INTO devices (id, user_id, name, device_credential, credential_hashed) VALUES ($1, $2, $3, $4, TRUE)',
+      [id, userId, name, credentialHash]
+    );
+  }
+  return { id, device_credential: rawCredential };
 }
 
-async function getDeviceByCredential(cred) {
-  const { rows } = await pool.query(
-    'SELECT * FROM devices WHERE device_credential = $1',
-    [cred]
-  );
-  return rows[0] ?? null;
+async function getDeviceByCredential(rawCred) {
+  const { rows } = await pool.query('SELECT * FROM devices WHERE credential_hashed = TRUE');
+  for (const device of rows) {
+    if (await argon2.verify(device.device_credential, rawCred)) return device;
+  }
+  return null;
 }
 
 async function listDevices(userId) {
