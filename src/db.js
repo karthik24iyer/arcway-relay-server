@@ -27,6 +27,7 @@ async function initSchema() {
       created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
       UNIQUE(provider, provider_sub)
     );
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS max_devices INTEGER NOT NULL DEFAULT 5;
 
     CREATE TABLE IF NOT EXISTS devices (
       id                TEXT PRIMARY KEY,
@@ -50,6 +51,17 @@ async function initSchema() {
       created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS sessions_user_id ON sessions(user_id);
+
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id    INTEGER REFERENCES users(id),
+      device_id  TEXT,
+      event      TEXT NOT NULL,
+      ip_address TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS audit_log_user_id ON audit_log(user_id);
+    CREATE INDEX IF NOT EXISTS audit_log_created_at ON audit_log(created_at);
   `);
 }
 
@@ -73,24 +85,36 @@ async function upsertDeviceByName(userId, name) {
     [userId, name]
   );
 
-  let id;
   if (existing.rows[0]) {
-    id = existing.rows[0].id;
+    const id = existing.rows[0].id;
     await pool.query(
       'UPDATE devices SET device_credential = $1, credential_hashed = TRUE WHERE id = $2',
       [credentialHash, id]
     );
-  } else {
-    id = uuidv4();
-    await pool.query(
-      'INSERT INTO devices (id, user_id, name, device_credential, credential_hashed) VALUES ($1, $2, $3, $4, TRUE)',
-      [id, userId, name, credentialHash]
-    );
+    return { id, device_credential: rawCredential };
   }
+
+  // New device: enforce per-user limit
+  const { rows: [user] } = await pool.query('SELECT max_devices FROM users WHERE id = $1', [userId]);
+  const { rows: [{ count }] } = await pool.query('SELECT COUNT(*) FROM devices WHERE user_id = $1', [userId]);
+  if (parseInt(count, 10) >= (user?.max_devices ?? 5)) throw new Error('Device limit reached');
+
+  const id = uuidv4();
+  await pool.query(
+    'INSERT INTO devices (id, user_id, name, device_credential, credential_hashed) VALUES ($1, $2, $3, $4, TRUE)',
+    [id, userId, name, credentialHash]
+  );
   return { id, device_credential: rawCredential };
 }
 
-async function getDeviceByCredential(rawCred) {
+async function getDeviceByCredential(rawCred, deviceId = null) {
+  if (deviceId) {
+    // Fast path: look up single row by PK, verify only that one
+    const { rows } = await pool.query('SELECT * FROM devices WHERE id = $1 AND credential_hashed = TRUE', [deviceId]);
+    if (rows[0] && await argon2.verify(rows[0].device_credential, rawCred)) return rows[0];
+    return null; // device_id provided but didn't match — don't fall back to full scan
+  }
+  // Legacy path: full scan (clients that don't send device_id yet)
   const { rows } = await pool.query('SELECT * FROM devices WHERE credential_hashed = TRUE');
   for (const device of rows) {
     if (await argon2.verify(device.device_credential, rawCred)) return device;
@@ -155,4 +179,57 @@ async function revokeSession(tokenHash) {
   await pool.query('UPDATE sessions SET revoked = TRUE WHERE token_hash = $1', [tokenHash]);
 }
 
-module.exports = { pool, initSchema, upsertUser, upsertDeviceByName, getDeviceByCredential, listDevices, updateLastSeen, getUserById, createSession, rotateSession, revokeSession };
+async function getDevice(deviceId) {
+  const { rows } = await pool.query('SELECT id, user_id FROM devices WHERE id = $1', [deviceId]);
+  return rows[0] ?? null;
+}
+
+async function deleteDevice(deviceId) {
+  await pool.query('DELETE FROM devices WHERE id = $1', [deviceId]);
+}
+
+async function deleteAccount(userId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('UPDATE sessions SET revoked = TRUE WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM devices WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM audit_log WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM users WHERE id = $1', [userId]);
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function logAudit(userId, deviceId, event, ipAddress) {
+  await pool.query(
+    'INSERT INTO audit_log (user_id, device_id, event, ip_address) VALUES ($1, $2, $3, $4)',
+    [userId ?? null, deviceId ?? null, event, ipAddress ?? null]
+  );
+}
+
+async function listAuditLog(userId) {
+  const { rows } = await pool.query(
+    'SELECT id, device_id, event, ip_address, created_at FROM audit_log WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100',
+    [userId]
+  );
+  return rows;
+}
+
+async function pruneAuditLog() {
+  await pool.query(
+    'DELETE FROM audit_log WHERE id IN (SELECT id FROM audit_log WHERE created_at < now() - interval \'90 days\' LIMIT 1000)'
+  );
+}
+
+module.exports = {
+  pool, initSchema,
+  upsertUser, upsertDeviceByName, getDeviceByCredential, listDevices, updateLastSeen, getUserById,
+  getDevice, deleteDevice, deleteAccount,
+  createSession, rotateSession, revokeSession,
+  logAudit, listAuditLog, pruneAuditLog,
+};

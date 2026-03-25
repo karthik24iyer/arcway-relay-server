@@ -303,7 +303,7 @@ agentWs.setMaxListeners(6); // 5 real + 1 headroom as canary
 
 ---
 
-## Milestone 6 — Device Limits + Audit Log + Account Deletion
+## Milestone 6 — Device Limits + Audit Log + Account Deletion ✓ DONE (2026-03-25)
 Relay-only. All verifiable via API — no Android UI changes needed.
 
 ### Per-user device limit (`db.js`, `devices.js`, `relay.js`)
@@ -453,7 +453,7 @@ gets "Device offline" on reconnect. This is acceptable — document it in ops ru
 | 3b — Android + shorten JWT | M3a + Android shipped | 3–4 days | Yes | Done (2026-03-25) |
 | 4 — Credential hashing | M2 | 2–3 days | No | Done (2026-03-25) |
 | 5 — Multi-client guard | M1 | 1 day | Yes (session hijack vector) | Done (2026-03-24) |
-| 6 — Device limits + audit | M2 | 2–3 days | No | Pending |
+| 6 — Device limits + audit | M2 | 2–3 days | No | Done (2026-03-25) |
 | 7a — Redis single node | M2 | 3–4 days | No | Pending |
 | 7b — Redis two nodes | M7a | 1–2 days | No | Pending |
 
