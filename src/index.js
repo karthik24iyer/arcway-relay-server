@@ -11,6 +11,7 @@ const app = express();
 const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') ?? ['http://localhost:3000'];
 app.use(cors({ origin: allowedOrigins }));
 app.use(express.json({ limit: '10kb' }));
+app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 app.use('/', devicesRouter);
 

@@ -28,6 +28,7 @@ async function initSchema() {
       UNIQUE(provider, provider_sub)
     );
     ALTER TABLE users ADD COLUMN IF NOT EXISTS max_devices INTEGER NOT NULL DEFAULT 5;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS max_sessions INTEGER NOT NULL DEFAULT 5;
 
     CREATE TABLE IF NOT EXISTS devices (
       id                TEXT PRIMARY KEY,
@@ -139,6 +140,11 @@ async function getUserById(id) {
   return rows[0] ?? null;
 }
 
+async function getUserConfig(id) {
+  const { rows } = await pool.query('SELECT max_sessions FROM users WHERE id = $1', [id]);
+  return rows[0] ?? { max_sessions: 5 };
+}
+
 async function createSession(userId, tokenHash, ipAddress) {
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
   await pool.query(
@@ -228,7 +234,7 @@ async function pruneAuditLog() {
 
 module.exports = {
   pool, initSchema,
-  upsertUser, upsertDeviceByName, getDeviceByCredential, listDevices, updateLastSeen, getUserById,
+  upsertUser, upsertDeviceByName, getDeviceByCredential, listDevices, updateLastSeen, getUserById, getUserConfig,
   getDevice, deleteDevice, deleteAccount,
   createSession, rotateSession, revokeSession,
   logAudit, listAuditLog, pruneAuditLog,

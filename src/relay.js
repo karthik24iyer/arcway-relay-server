@@ -1,5 +1,5 @@
 const { WebSocket } = require('ws');
-const { getDeviceByCredential, updateLastSeen, listDevices, getUserById, logAudit } = require('./db');
+const { getDeviceByCredential, updateLastSeen, listDevices, getUserById, getUserConfig, logAudit } = require('./db');
 const { verifySessionToken } = require('./auth');
 
 function getIp(req) {
@@ -143,11 +143,11 @@ function handleClientConnection(ws, req) {
         return;
       }
 
-      // getUserById before agentWs lookup — keeps agentWs fresh (no await after this point)
-      const user = await getUserById(userId).catch((err) => {
-        console.error(`getUserById failed for ${userId}:`, err);
-        return null;
-      });
+      // getUserById + getUserConfig before agentWs lookup — keeps agentWs fresh (no await after this point)
+      const [user, userConfig] = await Promise.all([
+        getUserById(userId).catch((err) => { console.error(`getUserById failed for ${userId}:`, err); return null; }),
+        getUserConfig(userId).catch((err) => { console.error(`getUserConfig failed for ${userId}:`, err); return { max_sessions: 5 }; }),
+      ]);
 
       agentWs = connectedAgents.get(msg.device_id);
       if (!agentWs || agentWs.readyState !== WebSocket.OPEN) {
@@ -201,6 +201,7 @@ function handleClientConnection(ws, req) {
       agentWs.on('close', onAgentClose);
       ws.on('close', onClientClose);
 
+      ws.send(JSON.stringify({ type: 'user_config', max_sessions: userConfig.max_sessions }));
       if (agentWs.readyState === WebSocket.OPEN) {
         agentWs.send(JSON.stringify({ type: 'client_connected', user_email: user?.email ?? '' }));
       }
