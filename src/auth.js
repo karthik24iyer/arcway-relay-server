@@ -27,8 +27,9 @@ function verifySessionToken(token) {
 }
 
 async function verifyAppleToken(identityToken) {
+  const audience = process.env.APPLE_CLIENT_ID || 'com.arcway.app';
   const payload = await appleSignin.verifyIdToken(identityToken, {
-    audience: process.env.APPLE_CLIENT_ID || 'com.clauderemote.claudeRemoteAndroid',
+    audience,
     ignoreExpiration: false,
   });
   // Apple may not return email after first sign-in; use sub as fallback identifier
