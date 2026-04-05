@@ -32,7 +32,7 @@ function startHeartbeat(ws, deviceId) {
     if (ws.readyState !== WebSocket.OPEN) { clearInterval(interval); return; }
     ws.ping();
     pongTimer = setTimeout(() => {
-      console.log(`Agent heartbeat timeout: ${deviceId}`);
+      console.log(`[${new Date().toISOString()}] Agent heartbeat timeout: ${deviceId}`);
       ws.terminate();
     }, PONG_DEADLINE);
   }, AGENT_PING_INTERVAL);
@@ -53,7 +53,7 @@ function startClientHeartbeat(ws, deviceId) {
     if (ws.readyState !== WebSocket.OPEN) { clearInterval(interval); return; }
     ws.ping();
     pongTimer = setTimeout(() => {
-      console.log(`Client heartbeat timeout: ${deviceId}`);
+      console.log(`[${new Date().toISOString()}] Client heartbeat timeout: ${deviceId}`);
       ws.terminate();
     }, PONG_DEADLINE);
   }, CLIENT_PING_INTERVAL);
@@ -106,14 +106,14 @@ function handleAgentConnection(ws, req) {
         existing.terminate();
       }
       connectedAgents.set(device.id, ws);
-      console.log(`Agent connected: ${device.id} (${device.name})`);
+      console.log(`[${new Date().toISOString()}] Agent connected: ${device.id} (${device.name})`);
       ws.send(JSON.stringify({ type: 'authenticated', device_id: device.id }));
       logAudit(device.user_id, device.id, 'agent_connected', ip).catch((err) => console.error('logAudit failed:', err));
       startHeartbeat(ws, device.id);
-      ws.once('close', () => {
+      ws.once('close', (code, reason) => {
         if (connectedAgents.get(device.id) === ws) {
           connectedAgents.delete(device.id);
-          console.log(`Agent disconnected: ${device.id}`);
+          console.log(`[${new Date().toISOString()}] Agent disconnected: ${device.id} code=${code} reason=${reason?.toString() || ''}`);
           logAudit(device.user_id, device.id, 'agent_disconnected', ip).catch((err) => console.error('logAudit failed:', err));
         }
       });
@@ -181,7 +181,7 @@ function handleClientConnection(ws, req) {
 
       agentWs.setMaxListeners(7); // canary: 6 real listeners + 1 headroom
       startClientHeartbeat(ws, msg.device_id);
-      console.log(`Client bridged to agent: ${msg.device_id}`);
+      console.log(`[${new Date().toISOString()}] Client bridged to agent: ${msg.device_id}`);
 
       onClientMessage = (chunk) => { if (agentWs.readyState === WebSocket.OPEN) agentWs.send(chunk); };
       onAgentMessage = (chunk) => { if (ws.readyState === WebSocket.OPEN) ws.send(chunk); };
@@ -200,7 +200,7 @@ function handleClientConnection(ws, req) {
         ws.removeListener('close', onClientClose);
         agentWs.removeListener('message', onAgentMessage);
         agentWs.removeListener('close', onAgentClose);
-        console.log(`Client disconnected from agent: ${msg.device_id}`);
+        console.log(`[${new Date().toISOString()}] Client disconnected from agent: ${msg.device_id}`);
         logAudit(userId, msg.device_id, 'client_disconnected', ip).catch((err) => console.error('logAudit failed:', err));
       };
 
