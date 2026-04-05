@@ -15,45 +15,51 @@ function sanitizeName(name) {
   return name.replace(/[^\x20-\x7E]/g, '').slice(0, 50) || 'My Mac';
 }
 
+// Heartbeat intervals and pong timeout tuned to survive nginx TLS proxy round-trip jitter.
+// 30 s ping interval, 15 s pong deadline = 45 s max before a dead connection is declared.
+const AGENT_PING_INTERVAL  = 30_000;
+const CLIENT_PING_INTERVAL = 30_000;
+const PONG_DEADLINE        = 15_000;
+
 function startHeartbeat(ws, deviceId) {
-  let alive = true;
+  let pongTimer = null;
   const onPong = () => {
-    alive = true;
+    if (pongTimer) { clearTimeout(pongTimer); pongTimer = null; }
     updateLastSeen(deviceId).catch((err) => console.error(`updateLastSeen failed: ${deviceId}`, err));
   };
   ws.on('pong', onPong);
   const interval = setInterval(() => {
     if (ws.readyState !== WebSocket.OPEN) { clearInterval(interval); return; }
-    if (!alive) {
+    ws.ping();
+    pongTimer = setTimeout(() => {
       console.log(`Agent heartbeat timeout: ${deviceId}`);
       ws.terminate();
-      return;
-    }
-    alive = false;
-    ws.ping();
-  }, 5000);
+    }, PONG_DEADLINE);
+  }, AGENT_PING_INTERVAL);
   ws.once('close', () => {
     clearInterval(interval);
+    if (pongTimer) { clearTimeout(pongTimer); pongTimer = null; }
     ws.removeListener('pong', onPong);
   });
 }
 
 function startClientHeartbeat(ws, deviceId) {
-  let alive = true;
-  const onPong = () => { alive = true; };
+  let pongTimer = null;
+  const onPong = () => {
+    if (pongTimer) { clearTimeout(pongTimer); pongTimer = null; }
+  };
   ws.on('pong', onPong);
   const interval = setInterval(() => {
     if (ws.readyState !== WebSocket.OPEN) { clearInterval(interval); return; }
-    if (!alive) {
+    ws.ping();
+    pongTimer = setTimeout(() => {
       console.log(`Client heartbeat timeout: ${deviceId}`);
       ws.terminate();
-      return;
-    }
-    alive = false;
-    ws.ping();
-  }, 10_000);
+    }, PONG_DEADLINE);
+  }, CLIENT_PING_INTERVAL);
   ws.once('close', () => {
     clearInterval(interval);
+    if (pongTimer) { clearTimeout(pongTimer); pongTimer = null; }
     ws.removeListener('pong', onPong);
   });
 }
@@ -156,11 +162,13 @@ function handleClientConnection(ws, req) {
         return;
       }
 
-      // check+set with no await between — eliminates TOCTOU race
-      if (bridgedAgents.has(msg.device_id)) {
-        ws.send(JSON.stringify({ type: 'error', message: 'Device already in use' }));
-        ws.close(1008, 'Device already in use');
-        return;
+      // Evict any stale bridge — handles reconnect where OS killed the socket without
+      // sending a close frame (bridgedAgents would still hold the dead WS for up to
+      // ~17 s until heartbeat timeout). Same approach as agent eviction above.
+      const existingClient = bridgedAgents.get(msg.device_id);
+      if (existingClient) {
+        bridgedAgents.delete(msg.device_id);
+        if (existingClient.readyState === WebSocket.OPEN) existingClient.close(1001, 'Connection superseded');
       }
       bridgedAgents.set(msg.device_id, ws);
       // guard: agent may have closed between awaits above and bridgedAgents.set
