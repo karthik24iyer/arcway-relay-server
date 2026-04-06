@@ -211,7 +211,7 @@ function handleClientConnection(ws, req) {
 
       ws.send(JSON.stringify({ type: 'user_config', max_sessions: userConfig.max_sessions }));
       if (agentWs.readyState === WebSocket.OPEN) {
-        agentWs.send(JSON.stringify({ type: 'client_connected', user_email: user?.email ?? '' }));
+        agentWs.send(JSON.stringify({ type: 'client_connected', user_email: user?.email ?? '', max_sessions: userConfig.max_sessions }));
       }
       logAudit(userId, msg.device_id, 'client_connected', ip).catch((err) => console.error('logAudit failed:', err));
     } catch (err) {
