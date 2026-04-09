@@ -26,10 +26,10 @@ function verifySessionToken(token) {
   return jwt.verify(token, process.env.JWT_SECRET);
 }
 
-async function verifyAppleToken(identityToken) {
-  const audience = process.env.APPLE_CLIENT_ID || 'com.arcway.app';
+async function verifyAppleToken(identityToken, audience) {
+  const aud = audience || process.env.APPLE_CLIENT_ID || 'com.arcway.app';
   const payload = await appleSignin.verifyIdToken(identityToken, {
-    audience,
+    audience: aud,
     ignoreExpiration: false,
   });
   // Apple may not return email after first sign-in; use sub as fallback identifier
@@ -37,4 +37,36 @@ async function verifyAppleToken(identityToken) {
   return { sub: payload.sub, email };
 }
 
-module.exports = { verifyGoogleToken, verifyAppleToken, signSessionToken, verifySessionToken };
+function generateAppleClientSecret() {
+  const privateKey = (process.env.APPLE_PRIVATE_KEY || '').replace(/\\n/g, '\n');
+  return jwt.sign({}, privateKey, {
+    algorithm: 'ES256',
+    expiresIn: '1h',
+    audience: 'https://appleid.apple.com',
+    issuer: process.env.APPLE_TEAM_ID,
+    subject: process.env.APPLE_MAC_CLIENT_ID,
+    keyid: process.env.APPLE_KEY_ID,
+  });
+}
+
+async function exchangeAppleCode(authorizationCode) {
+  const clientSecret = generateAppleClientSecret();
+  const params = new URLSearchParams({
+    client_id: process.env.APPLE_MAC_CLIENT_ID,
+    client_secret: clientSecret,
+    code: authorizationCode,
+    grant_type: 'authorization_code',
+    redirect_uri: process.env.APPLE_REDIRECT_URI,
+  });
+
+  const res = await fetch('https://appleid.apple.com/auth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: params.toString(),
+  });
+  const json = await res.json();
+  if (!json.id_token) throw new Error('Apple token exchange failed');
+  return json.id_token;
+}
+
+module.exports = { verifyGoogleToken, verifyAppleToken, signSessionToken, verifySessionToken, exchangeAppleCode };

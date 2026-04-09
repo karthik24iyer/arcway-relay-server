@@ -1,7 +1,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
-const { verifyGoogleToken, verifyAppleToken, signSessionToken, verifySessionToken } = require('./auth');
+const { verifyGoogleToken, verifyAppleToken, signSessionToken, verifySessionToken, exchangeAppleCode } = require('./auth');
 const { upsertUser, listDevices, upsertDeviceByName, createSession, rotateSession, revokeSession, getDevice, deleteDevice, deleteAccount, logAudit, listAuditLog } = require('./db');
 const { connectedAgents, sanitizeName } = require('./relay');
 
@@ -57,6 +57,21 @@ async function handleOAuthLogin(req, res, verifyFn, provider, tokenField) {
 
 router.post('/auth/google', authRateLimit, (req, res) => handleOAuthLogin(req, res, verifyGoogleToken, 'google', 'id_token'));
 router.post('/auth/apple', authRateLimit, (req, res) => handleOAuthLogin(req, res, verifyAppleToken, 'apple', 'identity_token'));
+
+router.post('/auth/apple/mac', authRateLimit, async (req, res) => {
+  try {
+    const { authorization_code } = req.body;
+    if (!authorization_code) return res.status(400).json({ error: 'Missing authorization_code' });
+    const identityToken = await exchangeAppleCode(authorization_code);
+    const { sub, email } = await verifyAppleToken(identityToken, process.env.APPLE_MAC_CLIENT_ID);
+    const user = await upsertUser(sub, email, 'apple');
+    res.json({ ...(await issueTokens(user.id, req.ip)), email });
+  } catch (err) {
+    console.error('/auth/apple/mac error:', err);
+    logAudit(null, null, 'auth_failed', req.ip).catch(() => {});
+    res.status(401).json({ error: 'Authentication failed' });
+  }
+});
 
 router.post('/auth/refresh', refreshRateLimit, async (req, res) => {
   try {
