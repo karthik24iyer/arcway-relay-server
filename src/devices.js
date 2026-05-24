@@ -99,7 +99,12 @@ router.post('/auth/logout', async (req, res) => {
 router.get('/api/devices', apiRateLimit, authMiddleware, async (req, res) => {
   try {
     const raw = await listDevices(req.userId);
-    res.json({ devices: raw.map((d) => ({ ...d, online: connectedAgents.has(d.id) })) });
+    res.json({
+      devices: raw.map((d) => {
+        const agentWs = connectedAgents.get(d.id);
+        return { ...d, online: !!agentWs, agents: agentWs?.agents ?? null };
+      }),
+    });
   } catch (err) {
     console.error('/api/devices error:', err);
     res.status(500).json({ error: 'Internal error' });

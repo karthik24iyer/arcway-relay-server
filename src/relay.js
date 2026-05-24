@@ -105,6 +105,7 @@ function handleAgentConnection(ws, req) {
         }
         existing.terminate();
       }
+      ws.agents = Array.isArray(msg.agents) ? msg.agents : null;
       connectedAgents.set(device.id, ws);
       console.log(`[${new Date().toISOString()}] Agent connected: ${device.id} (${device.name})`);
       ws.send(JSON.stringify({ type: 'authenticated', device_id: device.id }));
