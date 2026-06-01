@@ -8,6 +8,7 @@ const { connectedAgents, sanitizeName } = require('./relay');
 const router = express.Router();
 
 const authRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 10 });
+const pairRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 100 });
 const apiRateLimit = rateLimit({ windowMs: 60 * 1000, max: 100 });
 const refreshRateLimit = rateLimit({ windowMs: 15 * 60 * 1000, max: 20 });
 
@@ -76,7 +77,7 @@ async function respondPair(user, req, res) {
 }
 
 if (AUTH_MODE === 'pair') {
-  router.post('/auth/pair-initiate', authRateLimit, async (req, res) => {
+  router.post('/auth/pair-initiate', pairRateLimit, async (req, res) => {
     try {
       if ((await countUsers()) > 0) {
         if ((await countActiveSessions()) === 0) {
@@ -94,7 +95,7 @@ if (AUTH_MODE === 'pair') {
     }
   });
 
-  router.post('/auth/pair', authRateLimit, async (req, res) => {
+  router.post('/auth/pair', pairRateLimit, async (req, res) => {
     try {
       if (!constantTimeEqual(req.body?.code, process.env.RELAY_CODE || '')) {
         logAudit(null, null, 'auth_failed', req.ip).catch(() => {});
