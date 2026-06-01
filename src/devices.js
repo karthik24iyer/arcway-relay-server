@@ -2,7 +2,7 @@ const express = require('express');
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const { verifyGoogleToken, verifyAppleToken, signSessionToken, verifySessionToken, exchangeAppleCode } = require('./auth');
-const { upsertUser, listDevices, upsertDeviceByName, createSession, rotateSession, revokeSession, getDevice, deleteDevice, deleteAccount, logAudit, listAuditLog, countUsers, getOrCreateSingletonUser } = require('./storage');
+const { upsertUser, listDevices, upsertDeviceByName, createSession, rotateSession, revokeSession, getDevice, deleteDevice, deleteAccount, logAudit, listAuditLog, countUsers, countActiveSessions, purgeAll, getOrCreateSingletonUser } = require('./storage');
 const { connectedAgents, sanitizeName } = require('./relay');
 
 const router = express.Router();
@@ -79,7 +79,12 @@ if (AUTH_MODE === 'pair') {
   router.post('/auth/pair-initiate', authRateLimit, async (req, res) => {
     try {
       if ((await countUsers()) > 0) {
-        return res.status(409).json({ error: 'Relay already initialized — enter the pair code instead' });
+        if ((await countActiveSessions()) === 0) {
+          await purgeAll();
+          require('./bootstrap').regeneratePairCode();
+        } else {
+          return res.status(409).json({ error: 'Relay already initialized — enter the pair code instead' });
+        }
       }
       const user = await getOrCreateSingletonUser();
       await respondPair(user, req, res);

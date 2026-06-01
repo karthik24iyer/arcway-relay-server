@@ -75,6 +75,30 @@ async function countUsers() {
   return rows[0].count;
 }
 
+async function countActiveSessions() {
+  const { rows } = await pool.query(
+    "SELECT COUNT(*)::int AS count FROM sessions WHERE revoked = FALSE AND expires_at > now()"
+  );
+  return rows[0].count;
+}
+
+async function purgeAll() {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM sessions');
+    await client.query('DELETE FROM devices');
+    await client.query('DELETE FROM audit_log');
+    await client.query('DELETE FROM users');
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 async function getOrCreateSingletonUser() {
   const { rows } = await pool.query(
     `INSERT INTO users (provider_sub, provider, email)
@@ -245,7 +269,7 @@ async function pruneAuditLog() {
 
 module.exports = {
   init,
-  countUsers, getOrCreateSingletonUser,
+  countUsers, countActiveSessions, purgeAll, getOrCreateSingletonUser,
   upsertUser, upsertDeviceByName, getDeviceByCredential, listDevices, updateLastSeen, getUserById,
   getDevice, deleteDevice, deleteAccount,
   createSession, rotateSession, revokeSession,

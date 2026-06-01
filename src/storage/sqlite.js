@@ -68,6 +68,21 @@ async function countUsers() {
   return db.prepare('SELECT COUNT(*) AS count FROM users').get().count;
 }
 
+async function countActiveSessions() {
+  return db.prepare(
+    "SELECT COUNT(*) AS count FROM sessions WHERE revoked = 0 AND expires_at > ?"
+  ).get(nowIso()).count;
+}
+
+async function purgeAll() {
+  db.transaction(() => {
+    db.prepare('DELETE FROM sessions').run();
+    db.prepare('DELETE FROM devices').run();
+    db.prepare('DELETE FROM audit_log').run();
+    db.prepare('DELETE FROM users').run();
+  })();
+}
+
 async function getOrCreateSingletonUser() {
   return db.prepare(`
     INSERT INTO users (provider_sub, provider, email)
@@ -192,7 +207,7 @@ async function pruneAuditLog() {
 
 module.exports = {
   init,
-  countUsers, getOrCreateSingletonUser,
+  countUsers, countActiveSessions, purgeAll, getOrCreateSingletonUser,
   upsertUser, upsertDeviceByName, getDeviceByCredential, listDevices, updateLastSeen, getUserById,
   getDevice, deleteDevice, deleteAccount,
   createSession, rotateSession, revokeSession,
