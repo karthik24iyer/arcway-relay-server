@@ -82,7 +82,6 @@ if (AUTH_MODE === 'pair') {
       if ((await countUsers()) > 0) {
         if ((await countActiveSessions()) === 0) {
           await purgeAll();
-          require('./bootstrap').regeneratePairCode();
         } else {
           return res.status(409).json({ error: 'Relay already initialized — enter the pair code instead' });
         }
@@ -116,8 +115,7 @@ if (AUTH_MODE === 'pair') {
   router.post('/api/reset', apiRateLimit, authMiddleware, async (req, res) => {
     try {
       await deleteAccount(req.userId);
-      const new_pair_code = require('./bootstrap').regeneratePairCode();
-      res.json({ ok: true, new_pair_code });
+      res.json({ ok: true, pair_code: process.env.RELAY_CODE });
     } catch (err) {
       console.error('/api/reset error:', err);
       res.status(500).json({ error: 'Internal error' });
