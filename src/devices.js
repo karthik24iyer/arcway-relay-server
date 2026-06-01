@@ -61,6 +61,9 @@ const AUTH_MODE = process.env.AUTH_MODE === 'oauth' ? 'oauth' : 'pair';
 if (AUTH_MODE === 'oauth') {
   router.post('/auth/google', authRateLimit, (req, res) => handleOAuthLogin(req, res, verifyGoogleToken, 'google', 'id_token'));
   router.post('/auth/apple', authRateLimit, (req, res) => handleOAuthLogin(req, res, verifyAppleToken, 'apple', 'identity_token'));
+  router.get('/auth/apple/callback', (_req, res) => {
+    res.type('html').send('<!doctype html><meta charset="utf-8"><title>Arcway</title><body style="font-family:-apple-system,sans-serif;text-align:center;padding:40px"><h2>Signed in</h2><p>You can close this window.</p></body>');
+  });
 }
 
 function constantTimeEqual(a, b) {
