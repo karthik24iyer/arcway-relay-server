@@ -1,3 +1,4 @@
+const fs = require('fs');
 const { OAuth2Client } = require('google-auth-library');
 const jwt = require('jsonwebtoken');
 const appleSignin = require('apple-signin-auth');
@@ -38,7 +39,9 @@ async function verifyAppleToken(identityToken, audience) {
 }
 
 function generateAppleClientSecret() {
-  const privateKey = (process.env.APPLE_PRIVATE_KEY || '').replace(/\\n/g, '\n');
+  const privateKey = process.env.APPLE_PRIVATE_KEY_PATH
+    ? fs.readFileSync(process.env.APPLE_PRIVATE_KEY_PATH, 'utf8')
+    : (process.env.APPLE_PRIVATE_KEY || '').replace(/\\n/g, '\n');
   return jwt.sign({}, privateKey, {
     algorithm: 'ES256',
     expiresIn: '1h',

@@ -1,41 +1,138 @@
 # Arcway Relay Server
 
-Lightweight Node.js relay that bridges the mobile/mac client with the backend agent over WebSocket.
+Self-hostable WebSocket relay that bridges the Arcway mobile / desktop clients with the agent process on your Mac or Linux box. SQLite by default, auto-TLS, every feature unlocked.
 
-## Requirements
+## Quickstart
 
-- Node.js 18+
-
-## Setup
+You need a public domain pointing at the host (any DNS A record works — DuckDNS is free).
 
 ```bash
-npm install
+git clone https://github.com/karthik24iyer/arcway-relay-server
+cd arcway-relay-server
+cp .env.example .env       # edit DOMAIN
+docker compose up -d
 ```
 
-## Run
+That's it. Caddy obtains a Let's Encrypt cert for `DOMAIN` on first boot, the relay starts behind it, and `https://your-domain/` is live.
+
+## Pairing your devices
+
+In the Arcway Android / Mac / iOS app, flip **Self Host** ON. Enter your relay URL. Leave the pair code blank for the **first** device — the app will show you the code after pairing. For subsequent devices, enter that same code.
+
+```
+First device (Mac):                 Second device (phone):
+┌──────────────────────────┐        ┌──────────────────────────┐
+│ Self Host?         [──●] │        │ Self Host?         [──●] │
+│                          │        │                          │
+│ Relay URL                │        │ Relay URL                │
+│ [https://your-relay]     │        │ [https://your-relay]     │
+│                          │        │                          │
+│ Pair code                │        │ Pair code                │
+│ [                      ] │        │ [XK3F9P                ] │
+│   leave blank            │        │                          │
+│                          │        │                          │
+│ [ Connect ]              │        │ [ Connect ]              │
+└──────────────────────────┘        └──────────────────────────┘
+            │                                    │
+            ↓                                    ↓
+   Mac shows: "Pair code:                Phone joins,
+              XK3F9P"                    sees Mac in device list
+   ↳ type that on phone
+```
+
+If you need the pair code later (e.g. to add a third device):
+```bash
+docker compose exec relay cat /data/.relay-code
+```
+
+## Without a public domain
+
+Use one of these in front of `docker run` (skip `docker compose`):
+
+| Tool | Why |
+|---|---|
+| **Cloudflare Tunnel** | Free, no port forwarding |
+| **Tailscale Funnel** | Free for personal, no public IP needed |
+| **ngrok** | Quickest for testing |
 
 ```bash
-JWT_SECRET=your-secret node src/index.js
+docker run -d --name arcway-relay -v arcway-data:/data -p 3000:3000 \
+  ghcr.io/karthik24iyer/arcway-relay:latest
 ```
 
-Starts on port `3000` by default.
+## Postgres instead of SQLite
+
+SQLite handles up to ~1000 simultaneous users on modest hardware. Beyond that:
 
 ```bash
-# Custom port
-JWT_SECRET=your-secret PORT=3001 node src/index.js
+docker compose -f docker-compose.yml -f docker-compose.pg.yml up -d
 ```
 
-## Environment Variables
+## Pointing apps at your relay
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `JWT_SECRET` | Yes | Secret key for signing session tokens |
-| `PORT` | No | Server port (default: 3000) |
+- **Android**: Settings → Self Host ON → URL + code
+- **Mac**: Login screen → Self Host ON → URL + code
+- **iOS**: Login screen → Self Host ON → URL + code
+
+## Re-pairing / resetting
+
+If you lose access to all paired devices:
+```bash
+docker compose exec relay node src/reset.js --confirm
+```
+This purges all users/devices/sessions but keeps the same pair code. Add `--regenerate-code` to also rotate it.
+
+## Backup
+
+SQLite:
+```bash
+docker run --rm -v arcway-relay-server_arcway-data:/data -v "$(pwd):/backup" alpine \
+  cp /data/relay.db /backup/relay.db.bak
+```
+
+Postgres:
+```bash
+docker compose exec db pg_dump -U arcway arcway > arcway-backup.sql
+```
+
+## Per-user device limit
+
+Each account can register up to 9999 devices by default. To restrict:
+```sql
+UPDATE users SET max_devices = 3 WHERE id = N;
+```
+
+## Policy override (`OSS_POLICY`)
+
+The relay forwards "policy" fields to apps in the `user_config` and `client_connected` frames. **Absence of a field = no restriction.** To restrict features:
+
+```bash
+OSS_POLICY='{"max_sessions": 3, "allowed_agents": ["claude"]}'
+```
+
+### Known policy fields
+
+| Field | Type | Apps version | Absent = | Set = |
+|---|---|---|---|---|
+| `max_sessions` | int | Android 1.x, Mac 1.x | unlimited | cap at N |
+| `allowed_agents` | string[] | (future) | all agents shown | only listed shown |
+| `voice_enabled` | bool | (future) | enabled | hidden when `false` |
 
 ## Endpoints
 
-| Path | Protocol | Description |
-|------|----------|-------------|
-| `/agent` | WebSocket | Backend agent connects here |
-| `/client` | WebSocket | Client app connects here |
-| `/devices` | HTTP | Device registration |
+| Path | Protocol | Purpose |
+|---|---|---|
+| `/agent` | WS | Agent (Mac/Linux) |
+| `/client` | WS | Client (Android/iOS) |
+| `/auth/pair-initiate` | POST | First device (empty code) |
+| `/auth/pair` | POST | Subsequent devices (with code) |
+| `/api/pair/code` | GET (auth) | Re-show code on a paired device |
+| `/auth/refresh`, `/auth/logout` | POST | Session rotation |
+| `/api/devices`, `/api/devices/register`, `/api/devices/:id` | HTTP | Device CRUD |
+| `/api/account` | DELETE | Full erase |
+| `/api/audit` | GET | Last 100 audit events |
+| `/health` | GET | Liveness probe |
+
+## License
+
+MIT — see [LICENSE](LICENSE).

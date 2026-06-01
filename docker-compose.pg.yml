@@ -1,0 +1,25 @@
+services:
+  relay:
+    environment:
+      POSTGRES_URL: postgres://arcway:arcway@db:5432/arcway
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: arcway
+      POSTGRES_USER: arcway
+      POSTGRES_PASSWORD: arcway
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U arcway -d arcway"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

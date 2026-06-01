@@ -2,7 +2,7 @@ const express = require('express');
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const { verifyGoogleToken, verifyAppleToken, signSessionToken, verifySessionToken, exchangeAppleCode } = require('./auth');
-const { upsertUser, listDevices, upsertDeviceByName, createSession, rotateSession, revokeSession, getDevice, deleteDevice, deleteAccount, logAudit, listAuditLog } = require('./db');
+const { upsertUser, listDevices, upsertDeviceByName, createSession, rotateSession, revokeSession, getDevice, deleteDevice, deleteAccount, logAudit, listAuditLog, countUsers, getOrCreateSingletonUser } = require('./storage');
 const { connectedAgents, sanitizeName } = require('./relay');
 
 const router = express.Router();
@@ -55,23 +55,75 @@ async function handleOAuthLogin(req, res, verifyFn, provider, tokenField) {
   }
 }
 
-router.post('/auth/google', authRateLimit, (req, res) => handleOAuthLogin(req, res, verifyGoogleToken, 'google', 'id_token'));
-router.post('/auth/apple', authRateLimit, (req, res) => handleOAuthLogin(req, res, verifyAppleToken, 'apple', 'identity_token'));
+const AUTH_MODE = process.env.AUTH_MODE === 'oauth' ? 'oauth' : 'pair';
 
-router.post('/auth/apple/mac', authRateLimit, async (req, res) => {
-  try {
-    const { authorization_code } = req.body;
-    if (!authorization_code) return res.status(400).json({ error: 'Missing authorization_code' });
-    const identityToken = await exchangeAppleCode(authorization_code);
-    const { sub, email } = await verifyAppleToken(identityToken, process.env.APPLE_MAC_CLIENT_ID);
-    const user = await upsertUser(sub, email, 'apple');
-    res.json({ ...(await issueTokens(user.id, req.ip)), email });
-  } catch (err) {
-    console.error('/auth/apple/mac error:', err);
-    logAudit(null, null, 'auth_failed', req.ip).catch(() => {});
-    res.status(401).json({ error: 'Authentication failed' });
-  }
-});
+if (AUTH_MODE === 'oauth') {
+  router.post('/auth/google', authRateLimit, (req, res) => handleOAuthLogin(req, res, verifyGoogleToken, 'google', 'id_token'));
+  router.post('/auth/apple', authRateLimit, (req, res) => handleOAuthLogin(req, res, verifyAppleToken, 'apple', 'identity_token'));
+}
+
+function constantTimeEqual(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
+
+async function respondPair(user, req, res) {
+  logAudit(user.id, null, 'paired', req.ip).catch(() => {});
+  res.json({
+    ...(await issueTokens(user.id, req.ip)),
+    pair_code: process.env.RELAY_CODE,
+  });
+}
+
+if (AUTH_MODE === 'pair') {
+  router.post('/auth/pair-initiate', authRateLimit, async (req, res) => {
+    try {
+      if ((await countUsers()) > 0) {
+        return res.status(409).json({ error: 'Relay already initialized — enter the pair code instead' });
+      }
+      const user = await getOrCreateSingletonUser();
+      await respondPair(user, req, res);
+    } catch (err) {
+      console.error('/auth/pair-initiate error:', err);
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  router.post('/auth/pair', authRateLimit, async (req, res) => {
+    try {
+      if (!constantTimeEqual(req.body?.code, process.env.RELAY_CODE || '')) {
+        logAudit(null, null, 'auth_failed', req.ip).catch(() => {});
+        return res.status(401).json({ error: 'Invalid pair code' });
+      }
+      const user = await getOrCreateSingletonUser();
+      await respondPair(user, req, res);
+    } catch (err) {
+      console.error('/auth/pair error:', err);
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  router.get('/api/pair/code', apiRateLimit, authMiddleware, (req, res) => {
+    res.json({ pair_code: process.env.RELAY_CODE });
+  });
+}
+
+if (AUTH_MODE === 'oauth') {
+  router.post('/auth/apple/mac', authRateLimit, async (req, res) => {
+    try {
+      const { authorization_code } = req.body;
+      if (!authorization_code) return res.status(400).json({ error: 'Missing authorization_code' });
+      const identityToken = await exchangeAppleCode(authorization_code);
+      const { sub, email } = await verifyAppleToken(identityToken, process.env.APPLE_MAC_CLIENT_ID);
+      const user = await upsertUser(sub, email, 'apple');
+      res.json({ ...(await issueTokens(user.id, req.ip)), email });
+    } catch (err) {
+      console.error('/auth/apple/mac error:', err);
+      logAudit(null, null, 'auth_failed', req.ip).catch(() => {});
+      res.status(401).json({ error: 'Authentication failed' });
+    }
+  });
+}
 
 router.post('/auth/refresh', refreshRateLimit, async (req, res) => {
   try {

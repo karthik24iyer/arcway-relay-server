@@ -17,7 +17,11 @@ const pool = new Pool({
   connectionTimeoutMillis: 5000,
 });
 
-async function initSchema() {
+pool.on('error', (err) => console.error('PG pool error (continuing):', err.message));
+
+async function init() {
+  const client = await pool.connect();
+  client.release();
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id           SERIAL PRIMARY KEY,
@@ -27,8 +31,8 @@ async function initSchema() {
       created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
       UNIQUE(provider, provider_sub)
     );
-    ALTER TABLE users ADD COLUMN IF NOT EXISTS max_devices INTEGER NOT NULL DEFAULT 5;
-    ALTER TABLE users ADD COLUMN IF NOT EXISTS max_sessions INTEGER NOT NULL DEFAULT 5;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS max_devices INTEGER NOT NULL DEFAULT 9999;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS max_sessions INTEGER NOT NULL DEFAULT 9999;
 
     CREATE TABLE IF NOT EXISTS devices (
       id                TEXT PRIMARY KEY,
@@ -66,6 +70,21 @@ async function initSchema() {
   `);
 }
 
+async function countUsers() {
+  const { rows } = await pool.query('SELECT COUNT(*)::int AS count FROM users');
+  return rows[0].count;
+}
+
+async function getOrCreateSingletonUser() {
+  const { rows } = await pool.query(
+    `INSERT INTO users (provider_sub, provider, email)
+     VALUES ('singleton', 'pair', 'self-host@local')
+     ON CONFLICT (provider, provider_sub) DO UPDATE SET email = EXCLUDED.email
+     RETURNING *`
+  );
+  return rows[0];
+}
+
 async function upsertUser(providerSub, email, provider) {
   const { rows } = await pool.query(
     `INSERT INTO users (provider_sub, provider, email)
@@ -95,10 +114,9 @@ async function upsertDeviceByName(userId, name) {
     return { id, device_credential: rawCredential };
   }
 
-  // New device: enforce per-user limit
   const { rows: [user] } = await pool.query('SELECT max_devices FROM users WHERE id = $1', [userId]);
   const { rows: [{ count }] } = await pool.query('SELECT COUNT(*) FROM devices WHERE user_id = $1', [userId]);
-  if (parseInt(count, 10) >= (user?.max_devices ?? 5)) throw new Error('Device limit reached');
+  if (parseInt(count, 10) >= (user?.max_devices ?? 9999)) throw new Error('Device limit reached');
 
   const id = uuidv4();
   await pool.query(
@@ -110,12 +128,10 @@ async function upsertDeviceByName(userId, name) {
 
 async function getDeviceByCredential(rawCred, deviceId = null) {
   if (deviceId) {
-    // Fast path: look up single row by PK, verify only that one
     const { rows } = await pool.query('SELECT * FROM devices WHERE id = $1 AND credential_hashed = TRUE', [deviceId]);
     if (rows[0] && await argon2.verify(rows[0].device_credential, rawCred)) return rows[0];
-    return null; // device_id provided but didn't match — don't fall back to full scan
+    return null;
   }
-  // Legacy path: full scan (clients that don't send device_id yet)
   const { rows } = await pool.query('SELECT * FROM devices WHERE credential_hashed = TRUE');
   for (const device of rows) {
     if (await argon2.verify(device.device_credential, rawCred)) return device;
@@ -136,13 +152,8 @@ async function updateLastSeen(deviceId) {
 }
 
 async function getUserById(id) {
-  const { rows } = await pool.query('SELECT email FROM users WHERE id = $1', [id]);
+  const { rows } = await pool.query('SELECT email, max_sessions FROM users WHERE id = $1', [id]);
   return rows[0] ?? null;
-}
-
-async function getUserConfig(id) {
-  const { rows } = await pool.query('SELECT max_sessions FROM users WHERE id = $1', [id]);
-  return rows[0] ?? { max_sessions: 5 };
 }
 
 async function createSession(userId, tokenHash, ipAddress) {
@@ -198,7 +209,7 @@ async function deleteAccount(userId) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query('UPDATE sessions SET revoked = TRUE WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM sessions WHERE user_id = $1', [userId]);
     await client.query('DELETE FROM devices WHERE user_id = $1', [userId]);
     await client.query('DELETE FROM audit_log WHERE user_id = $1', [userId]);
     await client.query('DELETE FROM users WHERE id = $1', [userId]);
@@ -233,8 +244,9 @@ async function pruneAuditLog() {
 }
 
 module.exports = {
-  pool, initSchema,
-  upsertUser, upsertDeviceByName, getDeviceByCredential, listDevices, updateLastSeen, getUserById, getUserConfig,
+  init,
+  countUsers, getOrCreateSingletonUser,
+  upsertUser, upsertDeviceByName, getDeviceByCredential, listDevices, updateLastSeen, getUserById,
   getDevice, deleteDevice, deleteAccount,
   createSession, rotateSession, revokeSession,
   logAudit, listAuditLog, pruneAuditLog,

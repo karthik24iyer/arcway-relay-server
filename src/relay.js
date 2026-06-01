@@ -1,5 +1,5 @@
 const { WebSocket } = require('ws');
-const { getDeviceByCredential, updateLastSeen, listDevices, getUserById, getUserConfig, logAudit } = require('./db');
+const { getDeviceByCredential, updateLastSeen, listDevices, getUserById, logAudit } = require('./storage');
 const { verifySessionToken } = require('./auth');
 
 function getIp(req) {
@@ -13,6 +13,31 @@ const bridgedAgents = new Map();   // deviceId -> clientWs
 
 function sanitizeName(name) {
   return name.replace(/[^\x20-\x7E]/g, '').slice(0, 50) || 'My Mac';
+}
+
+let _hooks = {};
+function setHooks(h) { _hooks = h ?? {}; }
+
+let _ossPolicyCache;
+function ossDefaultPolicy() {
+  if (_ossPolicyCache !== undefined) return _ossPolicyCache;
+  try {
+    _ossPolicyCache = process.env.OSS_POLICY ? JSON.parse(process.env.OSS_POLICY) : {};
+  } catch (err) {
+    console.error('OSS_POLICY is not valid JSON, treating as empty:', err.message);
+    _ossPolicyCache = {};
+  }
+  return _ossPolicyCache;
+}
+
+async function resolvePolicy(ctx) {
+  if (!_hooks.decoratePolicy) return ossDefaultPolicy();
+  try {
+    return (await _hooks.decoratePolicy(ctx)) ?? {};
+  } catch (err) {
+    console.error('decoratePolicy hook threw, falling back to empty policy:', err);
+    return {};
+  }
 }
 
 // Heartbeat intervals and pong timeout tuned to survive nginx TLS proxy round-trip jitter.
@@ -150,10 +175,10 @@ function handleClientConnection(ws, req) {
         return;
       }
 
-      // getUserById + getUserConfig before agentWs lookup — keeps agentWs fresh (no await after this point)
-      const [user, userConfig] = await Promise.all([
+      // getUserById + resolvePolicy before agentWs lookup — keeps agentWs fresh (no await after this point)
+      const [user, policy] = await Promise.all([
         getUserById(userId).catch((err) => { console.error(`getUserById failed for ${userId}:`, err); return null; }),
-        getUserConfig(userId).catch((err) => { console.error(`getUserConfig failed for ${userId}:`, err); return { max_sessions: 5 }; }),
+        resolvePolicy({ userId }),
       ]);
 
       agentWs = connectedAgents.get(msg.device_id);
@@ -185,7 +210,17 @@ function handleClientConnection(ws, req) {
       console.log(`[${new Date().toISOString()}] Client bridged to agent: ${msg.device_id}`);
 
       onClientMessage = (chunk) => { if (agentWs.readyState === WebSocket.OPEN) agentWs.send(chunk); };
-      onAgentMessage = (chunk) => { if (ws.readyState === WebSocket.OPEN) ws.send(chunk); };
+      onAgentMessage = (chunk) => {
+        // Refresh ws.agents from any agent_availability_response — otherwise
+        // /api/devices stays frozen at the auth-time snapshot forever.
+        if (typeof chunk === 'string' && chunk.includes('"agent_availability_response"')) {
+          try {
+            const agents = JSON.parse(chunk).data?.agents;
+            if (Array.isArray(agents)) agentWs.agents = agents;
+          } catch (_) {}
+        }
+        if (ws.readyState === WebSocket.OPEN) ws.send(chunk);
+      };
       onAgentClose = () => {
         // identity guard: stale closure from agent reconnect must not evict a newer bridge
         if (bridgedAgents.get(msg.device_id) === ws) bridgedAgents.delete(msg.device_id);
@@ -210,9 +245,9 @@ function handleClientConnection(ws, req) {
       agentWs.on('close', onAgentClose);
       ws.on('close', onClientClose);
 
-      ws.send(JSON.stringify({ type: 'user_config', max_sessions: userConfig.max_sessions }));
+      ws.send(JSON.stringify({ type: 'user_config', ...policy }));
       if (agentWs.readyState === WebSocket.OPEN) {
-        agentWs.send(JSON.stringify({ type: 'client_connected', user_email: user?.email ?? '', max_sessions: userConfig.max_sessions }));
+        agentWs.send(JSON.stringify({ type: 'client_connected', user_email: user?.email ?? '', ...policy }));
       }
       logAudit(userId, msg.device_id, 'client_connected', ip).catch((err) => console.error('logAudit failed:', err));
     } catch (err) {
@@ -229,4 +264,4 @@ function handleClientConnection(ws, req) {
   });
 }
 
-module.exports = { connectedAgents, sanitizeName, handleAgentConnection, handleClientConnection, getIp };
+module.exports = { connectedAgents, sanitizeName, handleAgentConnection, handleClientConnection, getIp, setHooks };
