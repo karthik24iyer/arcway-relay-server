@@ -106,6 +106,17 @@ if (AUTH_MODE === 'pair') {
   router.get('/api/pair/code', apiRateLimit, authMiddleware, (req, res) => {
     res.json({ pair_code: process.env.RELAY_CODE });
   });
+
+  router.post('/api/reset', apiRateLimit, authMiddleware, async (req, res) => {
+    try {
+      await deleteAccount(req.userId);
+      const new_pair_code = require('./bootstrap').regeneratePairCode();
+      res.json({ ok: true, new_pair_code });
+    } catch (err) {
+      console.error('/api/reset error:', err);
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
 }
 
 if (AUTH_MODE === 'oauth') {

@@ -46,4 +46,12 @@ function ensureRelayCode() {
   console.log(`\n  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  Pair code: ${code}\n  Use this in the Arcway apps to pair devices.\n  Stored at: ${codeFile}\n  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
 }
 
-module.exports = { ensureJwtSecret, ensureRelayCode };
+function regeneratePairCode() {
+  const codeFile = path.join(dataDir(), '.relay-code');
+  try { fs.unlinkSync(codeFile); } catch (err) { if (err.code !== 'ENOENT') throw err; }
+  delete process.env.RELAY_CODE;
+  ensureRelayCode();
+  return process.env.RELAY_CODE;
+}
+
+module.exports = { ensureJwtSecret, ensureRelayCode, regeneratePairCode };
