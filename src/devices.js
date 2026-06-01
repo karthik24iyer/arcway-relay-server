@@ -80,11 +80,10 @@ if (AUTH_MODE === 'pair') {
   router.post('/auth/pair-initiate', pairRateLimit, async (req, res) => {
     try {
       if ((await countUsers()) > 0) {
-        if ((await countActiveSessions()) === 0) {
-          await purgeAll();
-        } else {
+        if (connectedAgents.size > 0) {
           return res.status(409).json({ error: 'Relay already initialized — enter the pair code instead' });
         }
+        await purgeAll();
       }
       const user = await getOrCreateSingletonUser();
       await respondPair(user, req, res);
