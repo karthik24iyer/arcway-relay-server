@@ -18,6 +18,7 @@ function createRelay({
   setHooks(hooks);
 
   const app = express();
+  app.set('trust proxy', 1);
   app.use(cors({ origin: allowedOrigins }));
   app.use(express.json({ limit: '10kb' }));
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
