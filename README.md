@@ -9,11 +9,21 @@ You need a public domain pointing at the host (any DNS A record works — DuckDN
 ```bash
 git clone https://github.com/karthik24iyer/arcway-relay-server
 cd arcway-relay-server
-cp .env.example .env       # edit DOMAIN
+# edit .env — set DOMAIN
 docker compose up -d
 ```
 
 That's it. Caddy obtains a Let's Encrypt cert for `DOMAIN` on first boot, the relay starts behind it, and `https://your-domain/` is live.
+
+### Run from source (no Docker)
+
+```bash
+npm install
+npm run dev      # auto-restart on changes (Node 20+)
+# or: npm start
+```
+
+Reads `.env` automatically. SQLite lives at `./data/relay.db`. Put TLS in front yourself (or use `http://localhost:3000` for local testing — the apps will warn but allow it).
 
 ## Pairing your devices
 
@@ -60,14 +70,6 @@ docker run -d --name arcway-relay -v arcway-data:/data -p 3000:3000 \
   ghcr.io/karthik24iyer/arcway-relay:latest
 ```
 
-## Postgres instead of SQLite
-
-SQLite handles up to ~1000 simultaneous users on modest hardware. Beyond that:
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.pg.yml up -d
-```
-
 ## Pointing apps at your relay
 
 - **Android**: Settings → Self Host ON → URL + code
@@ -84,39 +86,10 @@ This purges all users/devices/sessions but keeps the same pair code. Add `--rege
 
 ## Backup
 
-SQLite:
 ```bash
 docker run --rm -v arcway-relay-server_arcway-data:/data -v "$(pwd):/backup" alpine \
   cp /data/relay.db /backup/relay.db.bak
 ```
-
-Postgres:
-```bash
-docker compose exec db pg_dump -U arcway arcway > arcway-backup.sql
-```
-
-## Per-user device limit
-
-Each account can register up to 9999 devices by default. To restrict:
-```sql
-UPDATE users SET max_devices = 3 WHERE id = N;
-```
-
-## Policy override (`OSS_POLICY`)
-
-The relay forwards "policy" fields to apps in the `user_config` and `client_connected` frames. **Absence of a field = no restriction.** To restrict features:
-
-```bash
-OSS_POLICY='{"max_sessions": 3, "allowed_agents": ["claude"]}'
-```
-
-### Known policy fields
-
-| Field | Type | Apps version | Absent = | Set = |
-|---|---|---|---|---|
-| `max_sessions` | int | Android 1.x, Mac 1.x | unlimited | cap at N |
-| `allowed_agents` | string[] | (future) | all agents shown | only listed shown |
-| `voice_enabled` | bool | (future) | enabled | hidden when `false` |
 
 ## Endpoints
 

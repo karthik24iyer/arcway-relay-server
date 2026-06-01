@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const PAIR_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 function dataDir() {
-  return process.env.SQLITE_PATH ? path.dirname(process.env.SQLITE_PATH) : '/data';
+  return process.env.SQLITE_PATH ? path.dirname(process.env.SQLITE_PATH) : './data';
 }
 
 function ensureJwtSecret() {

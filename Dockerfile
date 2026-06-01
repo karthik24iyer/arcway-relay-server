@@ -13,6 +13,8 @@ FROM node:20-alpine
 RUN apk add --no-cache tini wget && \
     mkdir -p /data && chown node:node /data
 
+ENV SQLITE_PATH=/data/relay.db
+
 USER node
 WORKDIR /app
 

@@ -3,11 +3,7 @@ services:
     build: .
     image: arcway-relay:local
     environment:
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
-      MAC_CLIENT_ID: ${MAC_CLIENT_ID:-}
-      IOS_CLIENT_ID: ${IOS_CLIENT_ID:-}
       ALLOWED_ORIGINS: https://${DOMAIN}
-      OSS_POLICY: ${OSS_POLICY:-}
     volumes:
       - arcway-data:/data
     restart: unless-stopped

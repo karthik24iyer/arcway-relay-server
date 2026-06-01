@@ -8,7 +8,7 @@ const argon2 = require('argon2');
 const ARGON2_OPTIONS = { memoryCost: 4096, timeCost: 1, parallelism: 1 };
 const SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
-const dbPath = process.env.SQLITE_PATH || '/data/relay.db';
+const dbPath = process.env.SQLITE_PATH || './data/relay.db';
 fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');

@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 const bootstrap = require('./bootstrap');
 bootstrap.ensureJwtSecret();
 bootstrap.ensureRelayCode();
