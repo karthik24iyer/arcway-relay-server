@@ -61,8 +61,10 @@ const AUTH_MODE = process.env.AUTH_MODE === 'oauth' ? 'oauth' : 'pair';
 if (AUTH_MODE === 'oauth') {
   router.post('/auth/google', authRateLimit, (req, res) => handleOAuthLogin(req, res, verifyGoogleToken, 'google', 'id_token'));
   router.post('/auth/apple', authRateLimit, (req, res) => handleOAuthLogin(req, res, verifyAppleToken, 'apple', 'identity_token'));
-  router.get('/auth/apple/callback', (_req, res) => {
-    res.type('html').send('<!doctype html><meta charset="utf-8"><title>Arcway</title><body style="font-family:-apple-system,sans-serif;text-align:center;padding:40px"><h2>Signed in</h2><p>You can close this window.</p></body>');
+  router.get('/auth/apple/callback', (req, res) => {
+    const qs = new URLSearchParams(req.query).toString();
+    const target = `arcway-auth://callback?${qs}`;
+    res.type('html').send(`<!doctype html><meta charset="utf-8"><title>Arcway</title><meta http-equiv="refresh" content="0;url=${target}"><script>location.replace(${JSON.stringify(target)})</script><body style="font-family:-apple-system,sans-serif;text-align:center;padding:40px"><h2>Returning to Arcway…</h2><p>If nothing happens, <a href="${target}">click here</a>.</p></body>`);
   });
 }
 
