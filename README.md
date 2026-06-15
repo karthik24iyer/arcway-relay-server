@@ -25,6 +25,16 @@ npm run dev      # auto-restart on changes (Node 20+)
 
 Reads `.env` automatically. SQLite lives at `./data/relay.db`. Put TLS in front yourself (or use `http://localhost:3000` for local testing — the apps will warn but allow it).
 
+### Hosting where HTTPS is already handled
+
+If you're deploying the `Dockerfile` directly to a platform that terminates TLS for you and assigns the public URL, **skip the `docker compose` stack and skip setting `DOMAIN`**. Only the `relay` service is needed — the bundled Caddy container is just a reverse proxy for the self-hosted-VPS path. Steps:
+
+1. Point your platform at this repo's `Dockerfile` (no compose file needed). The container listens on the port given by `$PORT`, falling back to `3000`.
+2. Deploy and wait for your public URL to be assigned.
+3. *Then*, if you want to lock down the HTTP API to your own origin, set `ALLOWED_ORIGINS=https://<your-assigned-host>` as an env var and redeploy. Otherwise leave it unset (allows any origin).
+
+Use the assigned public URL in the apps' Self Host field.
+
 ## Pairing your devices
 
 In the Arcway Android / Mac / iOS app, flip **Self Host** ON. Enter your relay URL. Leave the pair code blank for the **first** device — the app will show you the code after pairing. For subsequent devices, enter that same code.
