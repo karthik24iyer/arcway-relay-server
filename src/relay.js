@@ -232,6 +232,7 @@ function handleClientConnection(ws, req) {
       };
       onClientClose = () => {
         if (bridgedAgents.get(msg.device_id) === ws) bridgedAgents.delete(msg.device_id);
+        if (agentWs.readyState === WebSocket.OPEN) agentWs.send(JSON.stringify({ type: 'client_disconnected' }));
         ws.removeListener('message', onClientMessage);
         ws.removeListener('close', onClientClose);
         agentWs.removeListener('message', onAgentMessage);
@@ -247,7 +248,8 @@ function handleClientConnection(ws, req) {
 
       ws.send(JSON.stringify({ type: 'user_config', ...policy }));
       if (agentWs.readyState === WebSocket.OPEN) {
-        agentWs.send(JSON.stringify({ type: 'client_connected', user_email: user?.email ?? '', ...policy }));
+        const clientName = typeof msg.client_name === 'string' ? msg.client_name.replace(/[^\x20-\x7E]/g, '').slice(0, 50) : '';
+        agentWs.send(JSON.stringify({ type: 'client_connected', user_email: user?.email ?? '', client_name: clientName, ...policy }));
       }
       logAudit(userId, msg.device_id, 'client_connected', ip).catch((err) => console.error('logAudit failed:', err));
     } catch (err) {
