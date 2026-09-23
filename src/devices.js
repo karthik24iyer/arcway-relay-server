@@ -228,3 +228,4 @@ router.get('/api/audit', apiRateLimit, authMiddleware, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.authMiddleware = authMiddleware;
