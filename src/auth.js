@@ -10,9 +10,7 @@ if (!process.env.JWT_SECRET) {
 const oauthClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 async function verifyGoogleToken(idToken) {
-  // MAC_CLIENT_ID may be comma-separated (old iOS-type + new Desktop-type Mac client)
-  const audience = [process.env.GOOGLE_CLIENT_ID, process.env.MAC_CLIENT_ID, process.env.IOS_CLIENT_ID]
-    .filter(Boolean).flatMap((id) => id.split(',').map((s) => s.trim())).filter(Boolean);
+  const audience = [process.env.GOOGLE_CLIENT_ID, process.env.MAC_CLIENT_ID, process.env.IOS_CLIENT_ID].filter(Boolean);
   const ticket = await oauthClient.verifyIdToken({
     idToken,
     audience,
