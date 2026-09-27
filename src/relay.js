@@ -30,6 +30,19 @@ function ossDefaultPolicy() {
   return _ossPolicyCache;
 }
 
+// Optional hook: hooks.filterClientFrame({ userId, policy, msg }) → null to forward, or
+// { error_code, message } to drop the frame and reply to the client. Only plaintext JSON
+// control frames are offered; E2E-encrypted binary frames always pass through untouched.
+function checkClientFrame(chunk, ctx) {
+  if (!_hooks.filterClientFrame) return null;
+  const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+  if (text[0] !== '{') return null;
+  let msg;
+  try { msg = JSON.parse(text); } catch { return null; }
+  try { return _hooks.filterClientFrame({ ...ctx, msg }) || null; }
+  catch (err) { console.error('filterClientFrame hook threw, forwarding frame:', err); return null; }
+}
+
 async function resolvePolicy(ctx) {
   if (!_hooks.decoratePolicy) return ossDefaultPolicy();
   try {
@@ -209,7 +222,14 @@ function handleClientConnection(ws, req) {
       startClientHeartbeat(ws, msg.device_id);
       console.log(`[${new Date().toISOString()}] Client bridged to agent: ${msg.device_id}`);
 
-      onClientMessage = (chunk) => { if (agentWs.readyState === WebSocket.OPEN) agentWs.send(chunk); };
+      onClientMessage = (chunk) => {
+        const rejection = checkClientFrame(chunk, { userId, policy });
+        if (rejection) {
+          if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'error', timestamp: new Date().toISOString(), id: `relay-${Date.now()}`, data: { retryable: false, ...rejection } }));
+          return;
+        }
+        if (agentWs.readyState === WebSocket.OPEN) agentWs.send(chunk);
+      };
       onAgentMessage = (chunk) => {
         // Refresh ws.agents from any agent_availability_response — otherwise
         // /api/devices stays frozen at the auth-time snapshot forever.
