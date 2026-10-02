@@ -121,16 +121,10 @@ async function upsertDeviceByName(userId, name) {
   return { id, device_credential: rawCredential };
 }
 
-async function getDeviceByCredential(rawCred, deviceId = null) {
-  if (deviceId) {
-    const row = db.prepare('SELECT * FROM devices WHERE id = ? AND credential_hashed = 1').get(deviceId);
-    if (row && await argon2.verify(row.device_credential, rawCred)) return row;
-    return null;
-  }
-  const rows = db.prepare('SELECT * FROM devices WHERE credential_hashed = 1').all();
-  for (const device of rows) {
-    if (await argon2.verify(device.device_credential, rawCred)) return device;
-  }
+async function getDeviceByCredential(rawCred, deviceId) {
+  if (!deviceId) return null;
+  const row = db.prepare('SELECT * FROM devices WHERE id = ? AND credential_hashed = 1').get(deviceId);
+  if (row && await argon2.verify(row.device_credential, rawCred)) return row;
   return null;
 }
 

@@ -123,7 +123,13 @@ function handleAgentConnection(ws, req) {
   withAuthTimeout(ws, async (msg) => {
     try {
       if (!msg.device_credential) { ws.close(1008, 'Missing device_credential'); return; }
-      const device = await getDeviceByCredential(msg.device_credential, msg.device_id || null);
+      // device_id required: without it, lookup would argon2-verify against every device (unauthenticated CPU DoS)
+      if (typeof msg.device_id !== 'string' || !msg.device_id) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Missing device_id — sign in again' }));
+        ws.close(1008, 'Missing device_id');
+        return;
+      }
+      const device = await getDeviceByCredential(msg.device_credential, msg.device_id);
       if (!device) {
         ws.send(JSON.stringify({ type: 'error', message: 'Invalid credential' }));
         ws.close(1008, 'Invalid credential');
